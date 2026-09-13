@@ -83,6 +83,41 @@ def main() -> int:
         # The composer defaults to posting to the Facebook page AND the linked
         # Instagram account. Left alone it would publish a SECOND Instagram post
         # on top of the reel already scheduled there. Turn Instagram off first.
+        ig_handle = _cfg().get("ig_profile") or "weeklysyncpodcast"
+        try:
+            # open the target picker by its chevron: the summary text itself is
+            # not clickable, and the surrounding elements are page-sized divs
+            box = page.evaluate("""(h) => {
+                const e = [...document.querySelectorAll('*')].find(x => {
+                    const r = x.getBoundingClientRect();
+                    return x.offsetParent !== null &&
+                           (x.innerText || '').includes('and ' + h) &&
+                           r.height > 28 && r.height < 80 && r.width > 280;
+                });
+                if (!e) return null;
+                const r = e.getBoundingClientRect();
+                return {x: Math.round(r.x), y: Math.round(r.y),
+                        w: Math.round(r.width), h: Math.round(r.height)};
+            }""", ig_handle)
+            if box:
+                page.mouse.click(box["x"] + box["w"] - 22, box["y"] + box["h"] // 2)
+                page.wait_for_timeout(3_000)
+                found = page.evaluate("""(h) => {
+                    const e = [...document.querySelectorAll(
+                        '[role=checkbox],[role=option],[role=switch],[role=menuitemcheckbox]')]
+                      .find(x => x.offsetParent !== null &&
+                                 new RegExp(h).test(x.innerText || ''));
+                    if (!e) return false;
+                    e.setAttribute('data-sofit-ig', '1');
+                    return true;
+                }""", ig_handle)
+                if found:
+                    page.locator("[data-sofit-ig]").first.click(timeout=6_000)
+                    page.wait_for_timeout(2_500)
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(2_000)
+        except Exception as e:  # noqa: BLE001
+            print(f"warn: could not adjust targets ({str(e)[:60]})", file=sys.stderr)
         ig_off = page.evaluate("""() => {
             const row = [...document.querySelectorAll('*')].find(e =>
                 e.offsetParent !== null &&
@@ -90,17 +125,6 @@ def main() -> int:
                 (e.innerText || '').length < 300);
             return row ? row.innerText.replace(/\\s+/g, ' ').slice(0, 160) : null;
         }""")
-        try:
-            page.get_by_text("Post to", exact=False).first.click(timeout=6_000)
-            page.wait_for_timeout(2_000)
-            ig = page.get_by_text("weeklysyncpodcast", exact=True).first
-            if ig.count():
-                ig.click(timeout=5_000)          # untick the Instagram target
-                page.wait_for_timeout(1_500)
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(1_000)
-        except Exception as e:  # noqa: BLE001
-            print(f"warn: could not adjust targets ({str(e)[:60]})", file=sys.stderr)
 
         # video first: the composer re-renders around the attachment, and a
         # caption typed before it can be discarded
@@ -186,8 +210,7 @@ def main() -> int:
                 (e.innerText || '').length < 300);
             return r ? r.innerText.replace(/\\s+/g, ' ') : '';
         }""")
-        ig_handle = _cfg().get("ig_profile") or "weeklysyncpodcast"
-        if ig_handle in (targets or "") or ig_handle in page.inner_text("body"):
+        if ig_handle in (targets or ""):
             page.screenshot(path=args.shot.replace(".png", "-blocked.png"))
             print(json.dumps({"status": "instagram_still_targeted",
                               "clip": args.clip, "targets": (targets or "")[:160],
