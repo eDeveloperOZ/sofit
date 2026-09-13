@@ -41,6 +41,12 @@ def _cfg() -> dict:
 CLIPS_DIR = Path(_cfg().get("clips_dir", "~/Downloads")).expanduser()
 
 
+def want_time_in(listed: str, hh: str, mi: str) -> bool:
+    """Is the slot's time visible in the scheduled-posts list? The list renders
+    it as text, which is the only place it can actually be read back."""
+    return any(f"{h}:{mi}" in listed for h in (hh, hh.lstrip("0"), f"{int(hh):02d}"))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip", required=True)
@@ -163,30 +169,61 @@ def main() -> int:
         try:
             page.get_by_text("Set date and time", exact=False).first.click(timeout=8_000)
             page.wait_for_timeout(2_500)
-            # select-all before typing: fill() APPENDS here, which produced
-            # "12/9/202609/14/2026" on the first run
-            d = page.locator("input[placeholder*='/'], input[type=date]").first
+            yyyy, mm, dd = post["date"].split("-")
+            hh, mi = plan["time_local"].split(":")
+            # The field is dd/mm/yyyy - the placeholder says so, and the first
+            # version typed mm/dd/yyyy, i.e. day 09 of month 14. Select-all
+            # before typing too: fill() APPENDS here.
+            d = page.locator("input[placeholder='dd/mm/yyyy']").first
             if d.count():
-                yyyy, mm, dd = post["date"].split("-")
                 d.click(timeout=6_000)
                 page.keyboard.press("Meta+A")
-                page.keyboard.type(f"{mm}/{dd}/{yyyy}")
-                page.wait_for_timeout(1_000)
-            t = page.locator("input[placeholder*=':'], input[type=time]").first
-            if t.count():
-                t.click(timeout=6_000)
-                page.keyboard.press("Meta+A")
-                page.keyboard.type(plan["time_local"])
-                page.wait_for_timeout(1_000)
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(1_500)
-            sched = page.evaluate("""() => {
-                const s = [...document.querySelectorAll('*')].find(e =>
-                    e.offsetParent !== null &&
-                    /Schedule/i.test(e.innerText || '') &&
-                    (e.innerText || '').length < 220);
-                return s ? s.innerText.replace(/\\s+/g, ' ').slice(0, 140) : null;
-            }""")
+                page.keyboard.type(f"{dd}/{mm}/{yyyy}")
+                page.wait_for_timeout(1_200)
+                page.keyboard.press("Escape")      # close the date picker
+                page.wait_for_timeout(800)
+            # Time is TWO inputs, hours and minutes, like TikTok's. fill()
+            # rather than click+type: typing left them empty, and the Escape
+            # that closes the date picker appears to clear a focused one.
+            for label, value in (("hours", hh), ("minutes", mi)):
+                f = page.locator(f"input[aria-label='{label}']").first
+                if f.count():
+                    f.fill(value, timeout=6_000)
+                    page.wait_for_timeout(900)
+                    if not (f.input_value(timeout=4_000) or "").strip():
+                        f.click(timeout=4_000)          # fallback: type it
+                        page.keyboard.type(value)
+                        page.wait_for_timeout(900)
+            page.wait_for_timeout(1_200)
+            try:  # bring the schedule block into view so the shot shows it
+                page.locator("input[placeholder='dd/mm/yyyy']").first \
+                    .scroll_into_view_if_needed(timeout=5_000)
+                page.wait_for_timeout(1_200)
+            except Exception:  # noqa: BLE001
+                pass
+            # read the fields back; a schedule that did not take is worse than
+            # one that failed loudly
+            # The time lives in React state, not in input.value - every DOM
+            # read comes back empty while the screenshot plainly shows 20:30.
+            # So gate on what IS readable here (the date, plus Facebook's own
+            # validation enabling the Schedule button) and verify the time
+            # properly after submitting, from the scheduled-posts list.
+            import calendar
+            want_date = f"{int(dd)} {calendar.month_name[int(mm)]} {yyyy}"
+            date_ok = page.evaluate("""(w) => [...document.querySelectorAll(
+                "input[placeholder='dd/mm/yyyy']")].some(e => (e.value||'') === w)""",
+                want_date)
+            sched = f"{want_date} {int(hh)}:{mi}"
+            btn = page.get_by_role("button", name="Schedule").first
+            can_schedule = btn.count() > 0 and btn.is_enabled(timeout=5_000)
+            if not date_ok or not can_schedule:
+                page.screenshot(path=args.shot.replace(".png", "-timefail.png"))
+                print(json.dumps({"status": "schedule_not_set", "clip": args.clip,
+                                  "wanted": sched, "date_ok": date_ok,
+                                  "schedule_button_enabled": can_schedule},
+                                 ensure_ascii=False))
+                ctx.close()
+                return 7
         except Exception as e:  # noqa: BLE001
             print(f"warn: schedule step failed ({str(e)[:60]})", file=sys.stderr)
 
@@ -221,12 +258,22 @@ def main() -> int:
             return 6
 
         page.get_by_role("button", name="Schedule").first.click(timeout=10_000)
-        page.wait_for_timeout(12_000)
-        page.screenshot(path=args.shot.replace(".png", "-after.png"), full_page=False)
+        page.wait_for_timeout(15_000)
+
+        # Verify from the scheduled list, never from the form we just filled.
+        page.goto("https://business.facebook.com/latest/posts/scheduled_posts",
+                  wait_until="domcontentloaded", timeout=90_000)
+        page.wait_for_timeout(14_000)
+        listed = page.inner_text("body")
+        head = caption.replace("\u202b", "").strip().split("\n")[0][:22]
+        page.screenshot(path=args.shot.replace(".png", "-after.png"), full_page=True)
         ctx.close()
-        print(json.dumps({"status": "submitted", "clip": args.clip},
+        ok = head in listed
+        print(json.dumps({"status": "scheduled" if ok else "not_found_in_list",
+                          "clip": args.clip, "wanted": sched,
+                          "time_listed": want_time_in(listed, hh, mi)},
                          ensure_ascii=False))
-        return 0
+        return 0 if ok else 8
 
 
 if __name__ == "__main__":
