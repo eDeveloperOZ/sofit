@@ -1992,6 +1992,13 @@ def extract_clip(
             cmd += ["-t", str(duration), "-vf", vf]
         if af:
             cmd += ["-af", af]
+        # SOFIT_FPS forces an output frame rate; unset, the clip inherits the
+        # source (50 for Weekly Sync). 25 is the interesting value: an exact
+        # halving of 50 drops every second frame with no judder and no
+        # interpolation, and reads less "video-y" than the very smooth 50.
+        _fps = os.environ.get("SOFIT_FPS", "").strip()
+        if _fps:
+            cmd += ["-r", _fps]
         cmd += [
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
@@ -2085,7 +2092,18 @@ def _prep_logo(logo_path: str, work_dir: str) -> str | None:
 
 def _concat_parts(parts: list[Path], output_path: Path) -> None:
     """Losslessly join rendered segment files (identical codec settings) into
-    `output_path` with the concat demuxer. Stream copy: no second encode."""
+    `output_path` with the concat demuxer. Stream copy: no second encode.
+
+    Known, measured, and deliberately not fixed (2026-09-13): each span's AAC
+    tail runs up to ~20ms past its video, the container duration follows the
+    longer stream, and the demuxer starts the next span at that offset - so a
+    3-span clip carries ~0.12s more video duration than its frame count allows,
+    about 3 frames of timestamp gap per join. `-shortest` on the span render
+    does not help; AAC cannot end mid-frame. Removing it entirely means
+    re-encoding through the concat FILTER on every beat-edited clip, which is a
+    real quality and time cost for a gap that lands exactly on a hard cut where
+    the audio is already fading. Revisit only if judder is ever actually seen.
+    """
     lst = output_path.with_suffix(".concat.txt")
     lst.write_text("".join(f"file '{p.resolve()}'\n" for p in parts), encoding="utf-8")
     try:
