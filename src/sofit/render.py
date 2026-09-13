@@ -155,6 +155,33 @@ def _target_resolution(aspect_ratio: str) -> tuple[int, int]:
     return (1080, 1080)    # square
 
 
+def _output_fps() -> str | None:
+    """Frame rate to render at, or None to inherit the source.
+
+    Weekly Sync shoots 50, and 50 on talking heads reads as live video rather
+    than produced - the "soap opera" look. 25 halves it exactly: every second
+    frame dropped, no judder, no interpolation, and each surviving frame gets
+    ~1.8x the bits at the same CRF, which survives the platforms' re-encode
+    better. Navot chose it from episode 211 (2026-09-13).
+
+    `SOFIT_FPS` overrides; `SOFIT_BRAND=off` falls back to inheriting.
+    """
+    raw = os.environ.get("SOFIT_FPS")
+    if raw is None and os.environ.get("SOFIT_BRAND") != "off":
+        try:  # brand-kit default, same place as zoom_out and caption_div
+            cfg = json.loads((Path.home() / ".sofit" / "brand.json").read_text())
+            raw = cfg.get("fps")
+        except (OSError, ValueError):
+            raw = None
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return str(v).rstrip("0").rstrip(".") if 1 <= v <= 120 else None
+
+
 def _zoom_out_factor() -> float:
     """How much WIDER than a fill-crop to frame a portrait clip (1.0 = fill).
 
@@ -1992,11 +2019,7 @@ def extract_clip(
             cmd += ["-t", str(duration), "-vf", vf]
         if af:
             cmd += ["-af", af]
-        # SOFIT_FPS forces an output frame rate; unset, the clip inherits the
-        # source (50 for Weekly Sync). 25 is the interesting value: an exact
-        # halving of 50 drops every second frame with no judder and no
-        # interpolation, and reads less "video-y" than the very smooth 50.
-        _fps = os.environ.get("SOFIT_FPS", "").strip()
+        _fps = _output_fps()
         if _fps:
             cmd += ["-r", _fps]
         cmd += [

@@ -749,3 +749,22 @@ def test_merge_continuations_commas_and_geresh():
     assert texts(toks("נינג", "\u05f3\u05d4")) == ["נינג\u05f3\u05d4"]
     # a comma that isn't a thousands separator stays its own token
     assert texts(toks("שלום", ", עולם")) == ["שלום", ", עולם"]
+
+
+def test_output_fps_sources_and_bounds(tmp_path, monkeypatch):
+    from sofit.render import _output_fps
+
+    monkeypatch.setenv("SOFIT_BRAND", "off")          # ignore the real brand kit
+    monkeypatch.delenv("SOFIT_FPS", raising=False)
+    assert _output_fps() is None                       # inherit the source
+
+    monkeypatch.setenv("SOFIT_FPS", "25")
+    assert _output_fps() == "25"
+    monkeypatch.setenv("SOFIT_FPS", "25.0")            # trailing zeros trimmed
+    assert _output_fps() == "25"
+    monkeypatch.setenv("SOFIT_FPS", "")                # empty means inherit
+    assert _output_fps() is None
+    monkeypatch.setenv("SOFIT_FPS", "banana")
+    assert _output_fps() is None
+    monkeypatch.setenv("SOFIT_FPS", "500")             # out of range
+    assert _output_fps() is None
