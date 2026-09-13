@@ -14,7 +14,10 @@ with its segments transposed (seen on the page's own first post, 2026-09-12).
 from __future__ import annotations
 
 import argparse
+import calendar
+
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -78,6 +81,12 @@ def main() -> int:
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(COMPOSER, wait_until="domcontentloaded", timeout=90_000)
         page.wait_for_timeout(12_000)
+        # The composer redirects to a URL carrying the PAGE's asset_id. Keep it:
+        # the listings are per-asset, and the bare /posts/scheduled_posts lands
+        # on the personal profile, whose list is empty - which read back as
+        # "nothing was scheduled" for seven posts that had scheduled fine.
+        m = re.search(r"asset_id=(\d+)", page.url)
+        asset_id = m.group(1) if m else None
         for name in ("Got it", "OK", "Close"):
             try:
                 page.get_by_role("button", name=name).first.click(timeout=3_000)
@@ -208,7 +217,6 @@ def main() -> int:
             # So gate on what IS readable here (the date, plus Facebook's own
             # validation enabling the Schedule button) and verify the time
             # properly after submitting, from the scheduled-posts list.
-            import calendar
             want_date = f"{int(dd)} {calendar.month_name[int(mm)]} {yyyy}"
             date_ok = page.evaluate("""(w) => [...document.querySelectorAll(
                 "input[placeholder='dd/mm/yyyy']")].some(e => (e.value||'') === w)""",
@@ -261,11 +269,13 @@ def main() -> int:
         page.wait_for_timeout(15_000)
 
         # Verify from the scheduled list, never from the form we just filled.
-        page.goto("https://business.facebook.com/latest/posts/scheduled_posts",
-                  wait_until="domcontentloaded", timeout=90_000)
+        listing = "https://business.facebook.com/latest/posts/scheduled_posts"
+        if asset_id:
+            listing += f"?asset_id={asset_id}"
+        page.goto(listing, wait_until="domcontentloaded", timeout=90_000)
         page.wait_for_timeout(14_000)
         listed = page.inner_text("body")
-        head = caption.replace("\u202b", "").strip().split("\n")[0][:22]
+        head = f"{int(dd)} {calendar.month_name[int(mm)]} {int(hh)}:{mi}"
         page.screenshot(path=args.shot.replace(".png", "-after.png"), full_page=True)
         ctx.close()
         ok = head in listed
