@@ -621,6 +621,28 @@ def main() -> int:
         by_speaker[p] = {s: {"clips": len(v),
                              metric: round(sum(v) / len(v), 1)}
                          for s, v in sorted(agg.items())}
+    # A/B cells (Navot, 2026-09-17: every batch runs 2-3 tests and a winner is
+    # called after the week). The tags already ride along - publog writes
+    # hook_style, and the variant comes from the rendered filename - but nothing
+    # compared them, so the data was being collected and never read.
+    # Episode-blind on purpose: a cell only becomes readable once it has
+    # accumulated across several batches, so this aggregates everything.
+    def _cells(key, default=None):
+        out: dict = {}
+        for p, metric in RANK_BY.items():
+            agg: dict = {}
+            for r in lines:
+                v = r.get(key, default)
+                if v is None or r.get("platform") != p or r.get(metric) is None:
+                    continue
+                agg.setdefault(str(v), []).append(r[metric])
+            out[p] = {k: {"clips": len(v), metric: round(sum(v) / len(v), 1)}
+                      for k, v in sorted(agg.items())}
+        return out
+
+    by_hook_style = _cells("hook_style", "flash")   # untagged rows are the default arm
+    by_variant = _cells("variant")
+
     print(json.dumps({
         "status": "ok", "updated": len(updated), "failed": len(failures),
         "new_live_reels": newly_logged,
@@ -630,6 +652,8 @@ def main() -> int:
         "worst": worst,
         "ranked": ranked,
         "by_speaker": by_speaker,
+        "by_hook_style": by_hook_style,
+        "by_variant": by_variant,
         "all": updated,
     }, ensure_ascii=False))
     return 0
