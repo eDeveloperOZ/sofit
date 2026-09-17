@@ -756,6 +756,11 @@ def _merge_continuations(words: list[dict]) -> list[dict]:
     out: list[dict] = []
     for w in words:
         txt = w["text"]
+        # a lone "%" is a continuation of the number before it: "10 %" (2026-09-17)
+        if txt == "%" and out:
+            out[-1] = {"text": out[-1]["text"] + txt,
+                       "start": out[-1]["start"], "end": w["end"]}
+            continue
         cont = len(txt) > 1 and (
             txt[0] == "-"
             or (txt[0] in ".," and txt[1].isdigit())
