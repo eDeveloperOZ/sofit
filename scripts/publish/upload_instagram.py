@@ -150,7 +150,10 @@ def main() -> int:
         # a cover FILE, and only HERE on the edit step - the share form has
         # no cover control. Auto-loads ~/Downloads/{episode}_cover-{clip}.jpg
         # (variant suffixes like .pers share the base clip's cover).
-        base_clip = args.clip.replace(".pers", "")
+        # strip EVERY A/B suffix, not just .pers: the hook-variant arm renders
+        # clip-7.hook1.mp4, and looking for WS211_cover-clip-7.hook1.jpg found
+        # nothing, so the opener went out with no cover at all (2026-09-17).
+        base_clip = re.sub(r"\.(hook\d+|pers)", "", args.clip)
         cover = CLIPS_DIR / f"{plan['episode']}_cover-{base_clip}.jpg"
         cover_set = False
         if cover.exists():
