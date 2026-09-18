@@ -117,3 +117,35 @@ def rtl_caption(text: str) -> str:
         else:
             out.append(RLE + para + PDF)
     return "\n".join(out)
+
+
+_WORD = re.compile(r"[֐-׿]{3,}")
+ECHO_LIMIT = 0.5
+
+
+def caption_echo(caption: str, spoken: str) -> float:
+    """Share of the caption's content words that the clip already says aloud.
+
+    Feedback 2026-09-18, from a viewer: "the text attached to the video just
+    repeats what's in the video, it doesn't add information." Measured across
+    WS211 that was exactly right - the eight captions scored 36-81%, median
+    71%. A caption that echoes the clip costs a reader their time and earns the
+    post nothing; the caption's job is to carry what the clip CANNOT - the
+    number, the source, what happened since, the question worth answering.
+
+    Short Hebrew words are dropped (prepositions and מ/ש/ה prefixes make
+    everything look like an echo) and so is the standing attribution line and
+    the hashtags, which repeat by design.
+    """
+    body = caption.split("מתוך וויקלי")[0]
+    body = "\n".join(l for l in body.split("\n") if not l.strip().startswith("#"))
+    words = set(_WORD.findall(body))
+    if not words:
+        return 0.0
+    return len(words & set(_WORD.findall(spoken))) / len(words)
+
+
+def clip_words(clip: dict) -> str:
+    """Everything said in a clip, single-span or multi-span beat edit."""
+    ws = clip.get("words") or [w for s in clip.get("segments", []) for w in s.get("words", [])]
+    return " ".join(w["w"] for w in ws)

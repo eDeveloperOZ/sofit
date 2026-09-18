@@ -234,6 +234,35 @@ def _render_from(clips_path: str, out_dir: str | None, aspect: str, only: str | 
     return 0
 
 
+def _caption_check(argv: list[str]) -> int:
+    """sofit caption-check <plan.json> <clips.json> - flag captions that only
+    restate the clip. Exits 1 if any post is at or over the echo limit."""
+    import json
+    import re as _re
+    from pathlib import Path
+    from .format import ECHO_LIMIT, caption_echo, clip_words
+
+    if len(argv) != 2:
+        print("usage: sofit caption-check <plan.json> <clips.json>", file=sys.stderr)
+        return 2
+    plan = json.loads(Path(argv[0]).read_text())
+    spec = json.loads(Path(argv[1]).read_text())
+    clips = {c["id"]: c for c in (spec["clips"] if isinstance(spec, dict) else spec)}
+
+    worst = 0.0
+    for post in plan.get("posts", []):
+        caption = post.get("instagram") or post.get("caption") or ""
+        # rendered names carry the A/B tags; the spec is keyed by the bare id
+        clip = clips.get(_re.sub(r"\.(hook\d+|pers)", "", post.get("clip", "")))
+        if not clip or not caption:
+            continue
+        echo = caption_echo(caption, clip_words(clip))
+        worst = max(worst, echo)
+        flag = "ECHO" if echo >= ECHO_LIMIT else "ok"
+        print(f"{post['clip']:22s} echo={echo:.0%} {flag}")
+    return 1 if worst >= ECHO_LIMIT else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # Subcommand fast path: `sofit publish-log ...` records a posted clip
     # (attribution join key for the metrics scraper). Everything else stays
@@ -242,6 +271,8 @@ def main(argv: list[str] | None = None) -> int:
     if raw and raw[0] == "publish-log":
         from . import publog
         return publog.main(raw[1:])
+    if raw and raw[0] == "caption-check":
+        return _caption_check(raw[1:])
 
     args = _parser().parse_args(argv)
 

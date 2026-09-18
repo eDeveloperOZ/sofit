@@ -99,3 +99,20 @@ def test_rtl_caption_pins_direction():
     assert "\n\n" in once
     # idempotent: a second pass re-marks from clean rather than nesting
     assert rtl_caption(once) == once
+
+
+def test_caption_echo_flags_a_retelling_and_spares_a_caption_that_adds():
+    from sofit.format import ECHO_LIMIT, caption_echo, clip_words
+
+    spoken = "מכרנו חברה לאופן איי גלאס אימגינג עושים אלגוריתם למצלמות חבר'ה שיצאו מאפל"
+    retell = "מכרנו חברה לאופן איי. גלאס אימגינג עושים אלגוריתם למצלמות, חבר'ה שיצאו מאפל."
+    adds = ("שלוש מאות מיליון דולר, פי שלושה מהשווי בסיבוב הקודם. "
+            "המייסדים בנו את מצב הפורטרט באייפון.")
+    assert caption_echo(retell, spoken) >= ECHO_LIMIT
+    assert caption_echo(adds, spoken) < ECHO_LIMIT
+    # the attribution line and hashtags repeat by design and must not count
+    assert caption_echo(adds + "\nמתוך וויקלי סינק פרק 211\n#מכרנו #חברה", spoken) \
+        == caption_echo(adds, spoken)
+    # multi-span beat edits keep their words under segments
+    assert clip_words({"segments": [{"words": [{"w": "שלום"}]}, {"words": [{"w": "עולם"}]}]}) \
+        == "שלום עולם"
