@@ -125,10 +125,23 @@ def main() -> int:
             return 5
         page.locator("[data-sofit-collab]").first.click(timeout=6_000)
         page.wait_for_timeout(1_500)
-        # two separate Done buttons: the collaborators popup's, then Edit info's
-        for _ in range(2):
+        # Two separate Done buttons: the collaborators popup's (blue, low on the
+        # page) and Edit info's (top bar). DOM order puts the top bar FIRST, so
+        # clicking .first twice saved the post before confirming the popup - the
+        # post came back marked Edited with the new collaborator dropped
+        # (2026-09-18). Click the LOWEST one first, then the topmost.
+        for which in ("lowest", "topmost"):
             try:
-                page.get_by_role("button", name="Done").first.click(timeout=5_000)
+                boxes = []
+                for i in range(page.get_by_role("button", name="Done").count()):
+                    b = page.get_by_role("button", name="Done").nth(i)
+                    bb = b.bounding_box()
+                    if bb:
+                        boxes.append((bb["y"], b))
+                if not boxes:
+                    break
+                boxes.sort(key=lambda t: t[0])
+                (boxes[-1] if which == "lowest" else boxes[0])[1].click(timeout=5_000)
                 page.wait_for_timeout(2_500)
             except Exception:  # noqa: BLE001
                 break
