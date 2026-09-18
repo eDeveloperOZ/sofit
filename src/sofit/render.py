@@ -155,6 +155,26 @@ def _target_resolution(aspect_ratio: str) -> tuple[int, int]:
     return (1080, 1080)    # square
 
 
+def _hook_card_cfg() -> tuple[float, int]:
+    """(seconds on screen, starting font divisor) for the opening hook card.
+
+    Audience feedback via WhatsApp, 2026-09-18: "גדולים מידי ומהירים מידי לא
+    מספיקים לקרוא". Both were hardcoded - 1.8s and height//16 (120px on a 1080
+    frame), which is ~5 Hebrew words a second and two lines across the face.
+    `hook_secs` and `hook_div` in brand.json now set them; bigger div = smaller
+    text. SOFIT_BRAND=off keeps the original numbers so tests stay hermetic.
+    """
+    secs, div = 1.8, 16
+    if os.environ.get("SOFIT_BRAND") != "off":
+        try:
+            cfg = json.loads((Path.home() / ".sofit" / "brand.json").read_text())
+            secs = float(cfg.get("hook_secs", secs))
+            div = int(cfg.get("hook_div", div))
+        except (OSError, ValueError, TypeError):
+            pass
+    return max(0.5, min(6.0, secs)), max(10, min(40, div))
+
+
 def _output_fps() -> str | None:
     """Frame rate to render at, or None to inherit the source.
 
@@ -901,7 +921,7 @@ def _fit_hook_card(hook: str, height: int, max_w: int, font: str | None = None):
     # off long hooks mid-clause on WS204 ("...ואף אחד לא" — losing "היה שם לב"),
     # which destroys the hook. Shrinking is the only lever; the floor bounds it.
     toks = hook.split()
-    size = max(34, height // 16)
+    size = max(34, height // _hook_card_cfg()[1])
     floor = max(22, height // 28)
     # The constraint that actually matters is how much of the frame the card
     # covers, so budget its HEIGHT rather than its line count. Line-count targets
@@ -937,7 +957,7 @@ def _fit_hook_card(hook: str, height: int, max_w: int, font: str | None = None):
 def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Path,
                           width: int, height: int, font: str | None = None,
                           speed: float = 1.0, hook: str | None = None,
-                          hook_dur: float = 1.8, hook_style: str = "flash",
+                          hook_dur: float | None = None, hook_style: str = "flash",
                           speaker_tags: list[dict] | None = None,
                           safe_area: str = "none",
                           hook_top_min: int = 0,
@@ -1011,6 +1031,8 @@ def _burn_captions_pillow(video_path: Path, entries: list[dict], output_path: Pa
             lines.append(cur)
         return lines
 
+    if hook_dur is None:
+        hook_dur = _hook_card_cfg()[0]
     # Opening hook card: big bold text up top for the first hook_dur seconds.
     # Precompute the wrapped lines once (the text is static).
     hook_lines: list[list[dict]] = []
