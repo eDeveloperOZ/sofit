@@ -209,27 +209,37 @@ def main() -> int:
             box.click(timeout=4_000)
             page.wait_for_timeout(1_200)
             for name in wanted:
-                # Two attempts: IG's suggestion list sometimes needs a re-type
-                # (the first fill can land before the search field is wired).
-                for attempt in (1, 2):
+                # Up to four attempts, with the wait growing: IG's suggestion
+                # search is rate-limited and often returns nothing for the
+                # first try or two. Measured 2026-09-18: with two attempts,
+                # five of eight posts went out missing one of the two names.
+                for attempt in (1, 2, 3, 4):
                     box.fill("")
-                    page.wait_for_timeout(400)
+                    page.wait_for_timeout(500)
                     box.fill(name)
-                    page.wait_for_timeout(2_500 * attempt)
+                    page.wait_for_timeout(1_800 * attempt)
                     try:
+                        # the row whose text is EXACTLY the handle - the list
+                        # also offers near-misses like tort_sukhum_svetlana
                         page.get_by_text(name, exact=True).first.click(timeout=5_000)
-                        collab_added.append(name)
-                        page.wait_for_timeout(800)
+                        page.wait_for_timeout(900)
                         break
                     except Exception:  # noqa: BLE001
                         continue
-                else:
-                    print(f"warn: collaborator {name} suggestion not found",
-                          file=sys.stderr)
             page.get_by_role("button", name="Done").click(timeout=4_000)
-            page.wait_for_timeout(1_000)
+            page.wait_for_timeout(1_200)
+            # Read the chips back instead of trusting the clicks. Appending to
+            # the list on a successful click was the old way, and it recorded
+            # intent rather than outcome.
+            collab_added = [n for n in wanted
+                            if page.get_by_text(n, exact=True).count()]
         except Exception as e:  # noqa: BLE001
             print(f"warn: collaborators step failed ({e})", file=sys.stderr)
+
+        missing_collab = [n for n in wanted if n not in collab_added]
+        if missing_collab:
+            print(f"warn: collaborators MISSING {missing_collab} - add them on the "
+                  f"live post with add_collaborator.py", file=sys.stderr)
 
         # Schedule content toggle + date + time spinbuttons.
         sched_val = ""
@@ -416,6 +426,7 @@ def main() -> int:
             ctx.close()
             print(json.dumps({"status": "dry_ok", "screenshot": args.shot,
                               "clip": args.clip, "collaborators": collab_added,
+                              "collaborators_missing": missing_collab,
                               "cover_set": cover_set, "facebook": fb_state,
                               "schedule_fields": sched_val},
                              ensure_ascii=False))
@@ -504,6 +515,7 @@ def main() -> int:
             return 4
         print(json.dumps({"status": "submitted", "clip": args.clip,
                           "date": post["date"], "collaborators": collab_added,
+                          "collaborators_missing": missing_collab,
                           "cover_set": cover_set,
                           "calendar_tiles": tiles}, ensure_ascii=False))
         return 0
