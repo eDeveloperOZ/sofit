@@ -120,10 +120,14 @@ def main() -> int:
         page.wait_for_timeout(8_000)
         after = _clean(page.inner_text("body"))
         page.screenshot(path=args.shot.replace(".png", "-after.png"), full_page=False)
-        ok = args.confirm in after and args.find not in after
+        # See edit_scheduled_caption.py: a --find the new caption reuses is not
+        # evidence the save failed.
+        reused = args.find in _clean(new_caption)
+        ok = args.confirm in after and (reused or args.find not in after)
         print(json.dumps({"status": "saved" if ok else "save_not_confirmed",
                           "confirm_present": args.confirm in after,
-                          "old_text_gone": args.find not in after},
+                          "old_text_gone": args.find not in after,
+                          "find_reused_in_new": reused},
                          ensure_ascii=False))
         ctx.close()
         return 0 if ok else 5

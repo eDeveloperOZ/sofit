@@ -142,10 +142,15 @@ def main() -> int:
             page.wait_for_timeout(5_000)
         body = _clean(page.inner_text("body"))
         page.screenshot(path=args.shot.replace(".png", "-after.png"), full_page=False)
-        ok = args.confirm in body and args.find not in body
+        # --find surviving only proves a failed save when the NEW caption does
+        # not contain it too. Two versions of one caption often share an
+        # opening, and that scored a correct save as a failure (2026-09-18).
+        reused = args.find in _clean(new_caption)
+        ok = args.confirm in body and (reused or args.find not in body)
         print(json.dumps({"status": "saved" if ok else "save_not_confirmed",
                           "confirm_present": args.confirm in body,
-                          "old_text_gone": args.find not in body},
+                          "old_text_gone": args.find not in body,
+                          "find_reused_in_new": reused},
                          ensure_ascii=False))
         ctx.close()
         return 0 if ok else 5
