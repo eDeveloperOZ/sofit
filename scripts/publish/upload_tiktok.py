@@ -339,9 +339,13 @@ def main() -> int:
         ctx.close()
         if post_url.startswith("/"):
             post_url = "https://www.tiktok.com" + post_url
-        print(json.dumps({"status": "submitted" if row_ok else "submitted_unverified",
-                          "clip": args.clip, "date": post["date"],
-                          "post_url": post_url}, ensure_ascii=False))
+        import autolog
+        out = {"status": "submitted" if row_ok else "submitted_unverified",
+               "clip": args.clip, "date": post["date"], "post_url": post_url}
+        # Log here, not in a later step: a batch once reported 20/20 submitted
+        # and logged none of it (2026-09-17).
+        out.update(autolog.log(args.plan, args.clip, "tiktok", post_url))
+        print(json.dumps(out, ensure_ascii=False))
         return 0
 
 

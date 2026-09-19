@@ -234,9 +234,11 @@ def main() -> int:
                if(b) b.click(); }""")
         page.wait_for_timeout(1_500)
         page.screenshot(path=args.shot, full_page=False)
-        print(json.dumps({"status": "submitted", "clip": args.clip,
-                          "date": post["date"], "time": want_time,
-                          "post_url": url}, ensure_ascii=False))
+        import autolog
+        out = {"status": "submitted", "clip": args.clip,
+               "date": post["date"], "time": want_time, "post_url": url}
+        out.update(autolog.log(args.plan, args.clip, "youtube", url))
+        print(json.dumps(out, ensure_ascii=False))
         ctx.close()
         return 0
 

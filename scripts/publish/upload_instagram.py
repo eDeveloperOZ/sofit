@@ -513,11 +513,15 @@ def main() -> int:
                               "screenshot": args.shot.replace(".png", "-calendar.png")},
                              ensure_ascii=False))
             return 4
-        print(json.dumps({"status": "submitted", "clip": args.clip,
-                          "date": post["date"], "collaborators": collab_added,
-                          "collaborators_missing": missing_collab,
-                          "cover_set": cover_set,
-                          "calendar_tiles": tiles}, ensure_ascii=False))
+        import autolog
+        out = {"status": "submitted", "clip": args.clip,
+               "date": post["date"], "collaborators": collab_added,
+               "collaborators_missing": missing_collab,
+               "cover_set": cover_set, "calendar_tiles": tiles}
+        # A scheduled reel has no URL yet, so this reports skipped_no_url and
+        # the row is logged once the reel is live. Saying so beats silence.
+        out.update(autolog.log(args.plan, args.clip, "instagram", None))
+        print(json.dumps(out, ensure_ascii=False))
         return 0
 
 
