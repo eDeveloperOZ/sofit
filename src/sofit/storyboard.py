@@ -513,12 +513,75 @@ def footage_coverage(clip: dict, target: float) -> dict:
             "video_seconds": round(covered, 3), "timeline_seconds": round(total, 3), "gaps": gaps}
 
 
+def _beat_complete(beat, cutaways):
+    from .render import _usable_cutaways
+    cursor = float(beat["start"])
+    for asset in sorted(_usable_cutaways(cutaways), key=lambda c: c["start"]):
+        if float(asset["start"]) > cursor + 1e-6:
+            return False
+        cursor = max(cursor, float(asset["end"]))
+    return cursor >= float(beat["end"]) - 1e-6
+
+
+def prepare_web_session(doc, session, only=None, coverage=None, titler="api",
+                        source_urls=(), published_after="", safe_only=False):
+    """Register shared visual actions before launching bounded source jobs."""
+    import hashlib
+    from .footage import VisualIntent
+    from .footage_progress import event, stage
+    intents = []
+    for clip in doc["clips"]:
+        if only and clip.get("id") != only:
+            continue
+        if "visual_plan" not in clip:
+            try:
+                with stage("planning"):
+                    clip["visual_plan"] = session.judge.call(lambda: plan_cutaways(clip, titler=titler, web=True,
+                        coverage=coverage if coverage is not None else clip.get("footage_coverage", 0)))
+            except Exception as e:
+                print(f"warning: visual planning failed: {type(e).__name__}; retaining original", file=sys.stderr)
+                clip["visual_plan"] = []
+        for original in clip["visual_plan"][:64]:
+            if original.get("source") != "web": continue
+            beat = dict(original)
+            if source_urls: beat["source_urls"] = list(source_urls)
+            if published_after: beat.update(published_after=published_after, prefer_recent=True)
+            try:
+                spans = clip.get("segments") or [clip]
+                span = int(beat.get("span", 0))
+                if not 0 <= span < len(spans): continue
+                limit = float(spans[span]["end"]) - float(spans[span]["start"])
+                start, end = float(beat["start"]), float(beat["end"])
+                start = 0.0 if -1e-6 <= start < 0 else start
+                end = min(end, limit) if end <= limit + 1e-6 else end
+                duration = end - start
+                if not 0 <= start < end <= limit or not 2 - 1e-6 <= duration <= 30 + 1e-6:
+                    continue
+                plan_id = hashlib.sha256(json.dumps(beat, sort_keys=True).encode()).hexdigest()[:24]
+                matched = [c for c in clip.get("cutaways", []) if c.get("plan_id") == plan_id]
+                if not safe_only and _beat_complete(beat, matched):
+                    session.reserve_existing(matched)
+                    continue
+                if any(not c.get("plan_id") and int(c.get("span", 0)) == span
+                       and start < c["end"] and end > c["start"] for c in clip.get("cutaways", [])):
+                    continue
+                intents.append(VisualIntent(beat["intent"], beat["query"], min(30., max(2., duration)),
+                    beat.get("context", ""), prefer_recent=beat.get("prefer_recent") is True,
+                    published_after=beat.get("published_after", ""), source_urls=tuple(beat.get("source_urls") or ()),
+                    required_terms=tuple(beat.get("required_terms") or ()),
+                    preferred_channels=tuple(beat.get("preferred_channels") or ())))
+            except (KeyError, ValueError, TypeError):
+                continue
+    event("planning_done", beats_total=len(intents))
+    session.submit(intents)
+
+
 def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
                      style: str | None = None, titler: str = "api",
                      generated: bool = False, animate: bool = False,
                      safe_only: bool = False, providers=None, cache=None, judge=None,
                      source_urls: tuple[str, ...] = (), published_after: str = "",
-                     coverage: float | None = None) -> int:
+                     coverage: float | None = None, session=None, on_clip=None) -> int:
     """Resolve an editable visual_plan into ordinary image/video cutaways.
 
     Existing editorial cutaways survive. Saved plans and assets are reused;
@@ -533,6 +596,7 @@ def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
 
     added = 0
     discoveries = {}
+    from .footage_progress import count, event, stage
     style = style or os.environ.get("SOFIT_STYLE") or DEFAULT_STYLE
 
     def permitted(c):
@@ -545,6 +609,8 @@ def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
         except (TypeError, ValueError, KeyError, AttributeError):
             return False
 
+    if session:
+        prepare_web_session(doc, session, only, coverage, titler, source_urls, published_after, safe_only)
     for clip in doc["clips"]:
         if only and clip.get("id") != only:
             continue
@@ -580,7 +646,7 @@ def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
                     existing = [c for c in existing if c.get("plan_id") != old_id]
                 matches = [c for c in existing if c.get("plan_id") == plan_id]
                 reusable = _usable_cutaways(matches)
-                if reusable:
+                if reusable and _beat_complete(beat, reusable):
                     continue
                 existing = [c for c in existing if c not in matches]
                 span, start, end = int(beat.get("span", 0)), float(beat["start"]), float(beat["end"])
@@ -588,7 +654,11 @@ def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
                 if not 0 <= span < len(spans):
                     continue
                 dur = float(spans[span]["end"]) - float(spans[span]["start"])
-                if not 0 <= start < end <= dur or not 2 <= end - start <= 30:
+                # JSON round-trips and subtraction of absolute transcript times
+                # may disagree at an exact boundary by a few floating-point ULPs.
+                start = 0.0 if -1e-6 <= start < 0 else start
+                end = min(end, dur) if end <= dur + 1e-6 else end
+                if not 0 <= start < end <= dur or not 2 - 1e-6 <= end - start <= 30 + 1e-6:
                     print(f"warning: rejected out-of-bounds web beat in {clip.get('id')}", file=sys.stderr)
                     continue
                 # An explicit/manual cutaway at this beat takes precedence.
@@ -597,15 +667,19 @@ def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
                     continue
                 asset = None
                 if beat.get("source") == "web":
-                    intent = VisualIntent(beat["intent"], beat["query"], end - start,
+                    intent = VisualIntent(beat["intent"], beat["query"], min(30.0, max(2.0, end - start)),
                                           beat.get("context", ""),
                                           prefer_recent=beat.get("prefer_recent") is True,
                                           published_after=beat.get("published_after", ""),
                                           source_urls=tuple(beat.get("source_urls") or ()),
                                           required_terms=tuple(beat.get("required_terms") or ()),
                                           preferred_channels=tuple(beat.get("preferred_channels") or ()))
-                    asset = find_footage(intent, providers=providers, cache=cache, judge=judge,
-                                         titler=titler, safe_only=safe_only, discovery_cache=discoveries)
+                    with stage("beat_selection"):
+                        asset = (session.find(intent) if session else find_footage(
+                            intent, providers=providers, cache=cache, judge=judge,
+                            titler=titler, safe_only=safe_only, discovery_cache=discoveries))
+                    count("beats_done")
+                    event("beat_selected", clip=str(clip.get("id")))
                 fallback_prompt = beat.get("prompt") or beat.get("intent")
                 if asset is None and generated and fallback_prompt:
                     try:
@@ -628,9 +702,18 @@ def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
                         print(f"warning: cutaway generation: {type(e).__name__}; keeping recording",
                               file=sys.stderr)
                 if asset:
-                    existing.append({"span": span, "start": start, "end": end,
-                                     "plan_id": plan_id, **asset})
-                    added += 1
+                    cursor = start
+                    parts = asset.get("parts") or [{"duration": end - start, **asset}]
+                    for part in parts:
+                        part = dict(part)
+                        duration = part.pop("duration")
+                        stop = min(end, cursor + duration)
+                        if stop <= cursor:
+                            break
+                        existing.append({"span": span, "start": cursor, "end": stop,
+                                         "plan_id": plan_id, **part})
+                        cursor = stop
+                        added += 1
             clip["cutaways"] = existing
         except Exception as e:  # a failed plan must never stop another clip's render
             print(f"warning: web cutaways for {clip.get('id')}: {type(e).__name__}; keeping recording",
@@ -642,6 +725,9 @@ def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
         if report["achieved_percent"] + 0.1 < report["requested_percent"]:
             print(f"warning: requested {report['requested_percent']:g}% footage coverage not met; "
                   "see footage_coverage_report.gaps; original visuals remain in gaps", file=sys.stderr)
+        write_json(Path(spec_path), doc)  # checkpoint each completed clip
+        if on_clip:
+            on_clip(clip)
     write_json(Path(spec_path), doc)
     return added
 
