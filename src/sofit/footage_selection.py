@@ -49,7 +49,7 @@ class ModelFrameJudge:
     def __init__(self, titler: str = "api"):
         self.titler = titler
         from .model_backends import backend
-        self.cache_key = backend(titler).cache_key + ":" + (
+        self.cache_key = backend(titler).cache_key + ":semantic-v2:" + (
             os.environ.get("SOFIT_TITLER_MODEL") or
             (generate.CLAUDE_MODEL if titler == "api" else "configured-cli-default"))
 
@@ -109,9 +109,13 @@ class ModelFrameJudge:
                 "Corroborate identity using visible branding/design across the supplied frames "
                 "together with the source context; do not require a readable company/facility "
                 "label in EVERY frame. Metadata alone cannot establish identity or action. "
-                "Fabricating or assembling identifiable product components can satisfy a production "
-                "intent; the complete finished product need not be visible. Actual manufacturing "
-                "must be visible: reject CGI, diagrams, talking heads and unsupported attribution. "
+                "For manufacturing intents, fabricating or assembling identifiable product components "
+                "can satisfy the action without a complete finished product; actual manufacturing "
+                "must be visible, not CGI or a presenter describing it. For software demonstration "
+                "intents, actual screen recordings showing the requested product and interaction "
+                "are valid evidence. A presenter is relevant only when that person or their "
+                "on-camera demonstration is explicitly requested. Never accept an unrelated "
+                "product, generic interface, title card or unsupported attribution. "
             )
         user = json.dumps({'actions': [{'intent': i.intent, 'required_terms': i.required_terms}
                                        for i in intents], 'timestamps': [f.at for f in frames],
