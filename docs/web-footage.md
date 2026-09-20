@@ -54,6 +54,12 @@ transcode near 720p, avoiding multi-gigabyte originals. Only Commons upload host
 are accepted by this provider. Commons timed-text tracks are preferred in English.
 No YouTube scraping, stock API, yt-dlp, or new dependency is involved.
 
+Catalog search is strict: the planner keeps queries concise (usually 2–4 words),
+preserving named subjects while keeping visual details in `intent`. For example,
+use `rocket launch` to search and describe the engine flame in the intent. Saved
+plans are editable when a search is too specific; an empty result keeps the
+original footage.
+
 Ranking uses English token overlap across title, description/tags and supplied
 cues; dimensions and duration only break relevant ties. Rights filtering happens
 before any download. At most eight results per provider and two candidates per

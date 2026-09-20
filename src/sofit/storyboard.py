@@ -322,10 +322,16 @@ def plan_cutaways(clip: dict, titler: str = "api", web: bool = False) -> list[di
             "source='generated' for metaphors/imaginary scenes; source='original' "
             "when the recording is best (or omit the beat). Never invent an event. "
             "For web beats include intent (English, specific visible subject AND "
-            "action), query (short English search keywords, exact product/event "
-            "if named), context (what is actually said), and prompt (optional "
+            "action), query (concise English search keywords), context (what is "
+            "actually said), and prompt (optional "
             "illustration fallback). Use web ONLY if seeing the real thing adds "
-            "information; do not search for every sentence. Each web beat 3-8s."
+            "information; do not search for every sentence. Each web beat 3-8s. "
+            "Search catalogs match keywords strictly: use the fewest words that "
+            "identify the subject and action, usually 2-4. Preserve any named "
+            "product/person/event; keep visual details in intent, not query. "
+            "Omit generic search words like footage/video and redundant synonyms. "
+            "For example, query='rocket launch', intent='a rocket rising from "
+            "its launch pad with visible engine flame'."
         )
     user = "\n".join(span_texts)
 
