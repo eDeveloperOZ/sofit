@@ -19,6 +19,8 @@ counts, downloads, rendered clips, cache hits, Claude calls and elapsed time.
 `active_stages` reports concurrent in-flight operations, rather than repeating a
 completed stage while another worker is still downloading. Event-only reasons and
 messages do not leak into later status events. No ETA is emitted: source/model latency is too variable for an uncalibrated estimate.
+Known sources include rejected or unused fallback candidates; not every known
+source needs downloading or analysis before a batch is complete.
 
 The output directory's `footage-metrics.json` contains totals. The JSONL also keeps
 per-clip completion latency and coverage, as well as rejection/failure events:

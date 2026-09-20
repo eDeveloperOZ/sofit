@@ -119,7 +119,10 @@ Equivalent intents share evidence independent of beat duration or query wording;
 a different action or required identity needs its own evidence. Direct URLs are
 registered before workers start, allowing up to four actions in one visual call.
 Search-discovered actions arriving later reuse existing frames/evidence and only
-analyze missing actions.
+analyze missing actions. Queued analysis refreshes the known action set after
+acquiring the source lock, so discoveries made while an earlier pass ran can be
+batched together. Automatic continuation beats reuse the same precise intent/query
+instead of creating a new semantic action for every edit point.
 
 Each action group starts with at most 24 coarse frames. Available subtitles can
 guide half the coarse samples; missing subtitles never trigger transcription.

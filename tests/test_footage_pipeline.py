@@ -223,6 +223,43 @@ def test_independent_clips_reuse_ranges_but_reserve_existing_shots(
     assert len(downloads) == len(resolves) == 1
 
 
+def test_queued_analysis_batches_actions_discovered_during_first_pass(
+    tmp_path, monkeypatch
+):
+    candidate, _, downloads = setup_source(monkeypatch, tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    batches, seen = [], set()
+
+    def evidence(media, metadata, intents, judge, **kwargs):
+        pending = {i.intent for i in intents} - seen
+        if pending:
+            batches.append(pending)
+            if len(batches) == 1:
+                entered.set()
+                assert release.wait(5)
+            seen.update(pending)
+        return {index.semantic_key(i): [] for i in intents}
+
+    monkeypatch.setattr(pipeline, "evidence", evidence)
+    intents = [
+        f.VisualIntent(action, "Unitree robot", 4)
+        for action in ("running", "sitting", "carrying", "waving")
+    ]
+    with pipeline.FootageSession(
+        f.FootageCache(tmp_path / "cache"), GreenJudge()
+    ) as session:
+        futures = [session._analysis_future(candidate, intents[0])]
+        try:
+            assert entered.wait(5)
+            futures += [session._analysis_future(candidate, i) for i in intents[1:]]
+        finally:
+            release.set()
+        for future in futures:
+            future.result(timeout=10)
+    assert batches == [{"running"}, {"sitting", "carrying", "waving"}]
+    assert len(downloads) == 1
+
+
 def test_quota_failure_stops_launches_and_is_not_persisted_as_negative_evidence(
     tmp_path, monkeypatch
 ):

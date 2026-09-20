@@ -444,6 +444,15 @@ class FootageSession:
                 source_lock = self.source_locks.setdefault(identity, threading.Lock())
             with source_lock, guard(media.parent, ".analysis-lock"):
                 touch(media.parent)
+                # Discovery may add actions while acquisition or another source
+                # pass is in flight. Refresh after acquiring the source lock so
+                # queued jobs batch those actions instead of replaying stale
+                # per-beat snapshots. Evidence still scores each action separately.
+                with self.lock:
+                    registered = self.source_intents.get(candidate.source_url, {})
+                    intents = list(
+                        {**{semantic_key(i): i for i in intents}, **registered}.values()
+                    )
                 result = evidence(
                     media,
                     metadata,

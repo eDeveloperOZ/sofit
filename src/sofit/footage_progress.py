@@ -62,7 +62,7 @@ class Progress:
                 c = self.counts
                 print(
                     f"sofit: {','.join(data['active_stages']) or stage} | clips {c['clips_done']}/{self.state.get('clips_total', '?')} "
-                    f"| sources {c['sources_done']}/{self.state.get('sources_total', '?')} "
+                    f"| sources {c['sources_done']} ready/{self.state.get('sources_total', '?')} known "
                     f"| beats {c['beats_done']}/{self.state.get('beats_total', '?')} "
                     f"| downloaded {c['downloads_done']} | rendered {c['rendered']} | cache {c['cache_hit']} "
                     f"| models {c['model_calls']} (Claude {c['claude_calls']}, Codex {c['codex_calls']}) | elapsed {data['elapsed_seconds']:.0f}s",
