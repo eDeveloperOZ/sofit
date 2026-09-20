@@ -278,3 +278,5 @@ remain rejected under the same confidence gate. Evidence cache versioning preven
 old context-free judgments from being reused for this contract.
 
 Codex reference: [non-interactive execution](https://learn.chatgpt.com/docs/non-interactive-mode).
+
+For an existing video cutaway, `"fit": "blur"` keeps the complete source frame over a blurred moving portrait background. This is rendered in the existing composition pass, without an extra intermediate encode. The default remains `contain`; use `cover` only when cropping will preserve the relevant action.

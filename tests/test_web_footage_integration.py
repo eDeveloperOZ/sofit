@@ -43,6 +43,35 @@ def test_adjacent_fractional_cutaways_never_flash_base(tmp_path):
             assert b > r + 100, f"cutaway leaked at frame {index}"
 
 
+def test_blurred_cutaway_preserves_full_frame_and_timing(tmp_path):
+    """The sharp image keeps both edges/aspect, without black portrait margins."""
+    footage = tmp_path / "wide.mp4"
+    run("ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+        "color=red:s=300x100:r=30:d=1",
+        "-vf", "drawbox=x=100:y=0:w=100:h=100:color=green:t=fill,"
+        "drawbox=x=200:y=0:w=100:h=100:color=white:t=fill",
+        "-c:v", "libx264", "-y", str(footage))
+    command = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+               "color=blue:s=90x160:r=30:d=2"]
+    filters = []
+    last, _ = render._append_cutaways(command, filters, "0:v", 1, [
+        {"video": str(footage), "start": 0.5, "end": 1.5, "fit": "blur"},
+    ], 90, 160)
+    pixels = run(*command, "-filter_complex", ";".join(filters), "-map", f"[{last}]",
+                 "-pix_fmt", "rgb24", "-f", "rawvideo", "-")
+    def pixel(frame, x, y):
+        offset = (frame * 90 * 160 + y * 90 + x) * 3
+        return tuple(pixels[offset:offset + 3])
+    assert len(pixels) == 60 * 90 * 160 * 3
+    assert pixel(30, 5, 80)[0] > 200  # left edge preserved
+    assert pixel(30, 45, 80)[1] > 90  # square source becomes 30x30, not stretched
+    assert min(pixel(30, 85, 80)) > 200  # right edge preserved
+    assert max(pixel(30, 45, 10)) > 20  # moving backdrop, not black padding
+    for frame in (5, 55):
+        red, _, blue = pixel(frame, 45, 80)
+        assert blue > red + 150  # original before/after, no cutaway leakage
+
+
 @pytest.mark.parametrize("provider_kind", ["fixture", "youtube", "direct", "coverage"])
 def test_transcript_to_selected_web_cutaway_and_real_render(monkeypatch, tmp_path, provider_kind):
     Image = pytest.importorskip("PIL.Image")
@@ -143,7 +172,8 @@ def test_transcript_to_selected_web_cutaway_and_real_render(monkeypatch, tmp_pat
     video = next(s for s in probe["streams"] if s["codec_type"] == "video")
     assert (video["width"], video["height"], video["pix_fmt"]) == (180, 320, "yuv420p")
     assert abs(float(probe["format"]["duration"]) - 12) < 0.15
-    audio = lambda p: run("ffmpeg", "-v", "error", "-i", str(p), "-map", "0:a:0", "-f", "s16le", "-")
+    def audio(p):
+        return run("ffmpeg", "-v", "error", "-i", str(p), "-map", "0:a:0", "-f", "s16le", "-")
     assert audio(output) == audio(baseline)  # external 880Hz audio never enters the mix
     for at, green in [(1, provider_kind == "coverage"), (6, True), (10, provider_kind == "coverage")]:
         image = Image.open(io.BytesIO(run("ffmpeg", "-v", "error", "-ss", str(at), "-i", str(output),

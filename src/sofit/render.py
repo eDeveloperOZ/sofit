@@ -1788,6 +1788,17 @@ def _append_cutaways(cmd: list[str], filters: list[str], last: str, idx: int,
             framing = (f"scale={tw}:{th}:force_original_aspect_ratio=decrease,"
                        f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2" if c.get("fit") == "contain"
                        else f"scale={tw}:{th}:force_original_aspect_ratio=increase,crop={tw}:{th}")
+            if c.get("fit") == "blur":
+                # Preserve the complete sharp frame, with a cheap moving backdrop.
+                bw, bh = max(2, tw // 8 * 2), max(2, th // 8 * 2)
+                framing = (
+                    f"split=2[cwbg{k}][cwfg{k}];"
+                    f"[cwbg{k}]scale={bw}:{bh}:force_original_aspect_ratio=increase,"
+                    f"crop={bw}:{bh},gblur=sigma=16,eq=brightness=-0.16:saturation=0.7,"
+                    f"scale={tw}:{th}[cwblur{k}];"
+                    f"[cwfg{k}]scale={tw}:{th}:force_original_aspect_ratio=decrease[cwsharp{k}];"
+                    f"[cwblur{k}][cwsharp{k}]overlay=(W-w)/2:(H-h)/2"
+                )
             filters.append(
                 f"[{idx}:v]{framing},setsar=1,fps=30,"
                 f"tpad=stop_mode=clone:stop_duration=15,"
