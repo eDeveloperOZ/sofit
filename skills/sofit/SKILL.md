@@ -138,6 +138,17 @@ ffmpeg -v error -i in.mp4 -filter_complex \
 ```
 Caveat: a re-render (step 4) brings the full length back — re-apply the cut after.
 
+## Optional real web footage
+
+For requests to use authentic footage or real B-roll, follow the Real web footage
+section in [`../sofit-clips/SKILL.md`](../sofit-clips/SKILL.md). After picking clips,
+run the **local editable CLI** with `--render-from <spec> --web-cutaways`.
+`--web-cutaways-safe-only` enables the conservative metadata filter; `--cutaways`
+allows generated fallback. Keep the saved plan/provenance, inspect frames and
+continuous audio/captions, and use normal `--render-from` for corrected rerenders.
+The provider and selection logic belong to Sofit itself; do not recreate them
+as ad hoc agent downloads.
+
 ## Conventions & gotchas (learned the hard way)
 
 - **Always verify with a real rendered frame**, don't trust code reads — extract with

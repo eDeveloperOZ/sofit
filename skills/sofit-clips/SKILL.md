@@ -106,6 +106,40 @@ Present the table; ask which numbers to render. Build the spec from the picks:
   `--hook-variant N` (1-based) — it writes `<id>.hookN.mp4` alongside the original.
 - This `--render-from` path is the ONLY one that honors caption fixes (`/sofit-captions`); plain `--render-clips` regenerates from the transcript.
 
+## Real web footage (optional)
+
+Requests such as "Create three social clips and use real web footage where useful"
+or "תפיק שלושה סרטוני TikTok מהפרק ותשלב צילומים אמיתיים מהרשת" use Sofit's
+native web-cutaway pipeline. Keep the usual clip-selection workflow, then:
+
+```bash
+"$SOFIT" --render-from "<episode>.clips.json" --render-clips "<out_dir>" \
+  --web-cutaways --titler claude-cli
+```
+
+- Run the CLI from the actual Sofit checkout/venv. For development, resolve `HC`
+  from the current workspace or the user's existing checkout (override the example
+  Home path), install editable with `uv pip install --python "$HC/.venv/bin/python"
+  -e "${HC}[dev,mcp,render]"`, and verify `"$PY" -c "import sofit; print(sofit.__file__)"`
+  points into that checkout. Do not silently use a global/PyPI executable.
+- The feature chooses at most two useful beats per clip; it does not search for
+  every sentence. Commons search needs no key. Planning and bounded frame review
+  need the configured Claude backend. If unavailable, report that the recording
+  was retained; do not claim real footage was inserted.
+- Default mode records rights metadata without filtering. For an explicit request
+  for a conservative rights filter, use `--web-cutaways-safe-only` instead. It
+  enables web cutaways and accepts only reported public domain, CC0 or CC BY with
+  required metadata; it is not automatic legal clearance.
+- Add `--cutaways` only when generated-image fallback is wanted and configured.
+  Without it, low confidence or any failed provider keeps the recording.
+- Inspect real rendered frames before/during/after the insert. Check identity,
+  action, framing, original audio and Hebrew captions. Read `<clip-id>.sources.json`
+  for credits and exact source timestamps; retain that provenance with the clip.
+- Corrected rerenders use the saved spec without the flag, reusing local assets
+  offline. To replan, remove the clip's `visual_plan` and matching cutaways.
+  Never download replacement footage independently and bypass the selection/cache
+  safeguards. The feature lives in the Python library/CLI, not this skill.
+
 ## 3. Log how they performed (closes the loop)
 After posting, record the numbers — this is the ONLY step that turns priors into real
 signal, and the data is perishable (unrecorded, which hook won is gone).

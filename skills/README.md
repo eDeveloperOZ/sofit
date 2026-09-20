@@ -23,3 +23,9 @@ Then invoke them by name, e.g. `/sofit-clips`.
 setup (`HC=` the repo/venv, `LOGO=` the show wordmark). Edit those to match your machine.
 `sofit-clips` calls the bundled `sofit/clips.py` (candidate-pool → pick → clips.json helper);
 keep it alongside the `sofit` skill.
+
+The web-footage instructions in `sofit-clips` also work for agents such as Codex:
+they call the same local Python CLI and clips JSON interface, with no agent-specific
+runtime dependency. Requests for real B-roll use `--web-cutaways` after selecting
+clips. See the repository README for credentials, caching, provenance and the
+optional `--web-cutaways-safe-only` metadata policy.

@@ -78,6 +78,14 @@ prompt contract. Both are now single-sourced in `generate.py`:
   into both prompts. This is the exact drift that let the pool ask for 20-60s clips while
   the code clamped at 45.
 
+## Real web footage cutaways
+
+Opt-in `--web-cutaways` extends the existing visual planner and renderer with
+Wikimedia Commons discovery, provenance, bounded coarse-to-fine frame review and
+cached silent excerpts. `--web-cutaways-safe-only` adds a conservative metadata
+allowlist. Search/selection failures retain the recording or use generated art
+when enabled. See [the architecture and limits](docs/web-footage.md).
+
 ## Proposed (next)
 
 Nothing queued. The natural next input is real performance data: once clips with different

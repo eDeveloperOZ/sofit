@@ -27,6 +27,24 @@ uses the Anthropic API and produces cleaner structured output.
 `ffmpeg` is used as a fallback decoder for exotic containers — install it if you
 hit a decode error (`brew install ffmpeg` / `apt install ffmpeg`).
 
+## Development
+
+Work from your existing checkout, with an editable install:
+
+```bash
+uv venv --python 3.12
+uv pip install --python .venv/bin/python -e '.[dev,mcp,render]'
+source .venv/bin/activate
+which sofit
+python -c "import sofit; print(sofit.__file__)"  # must be this checkout's src/sofit
+python -m pytest -q
+```
+
+Use `.venv/bin/sofit` and `.venv/bin/python` explicitly when another installation
+is on your PATH. The optional `crop` extra adds face tracking. Real rendering
+integration tests require ffmpeg/ffprobe and Pillow; other tests use mocks and
+make no network calls.
+
 ## Usage
 
 ```bash
@@ -105,6 +123,58 @@ short AI-illustrated scenes over it at concrete visual moments ("a Trojan
 horse", "a warehouse of goods") while the audio and captions run uninterrupted
 - combine with `--animate` for moving shots. Cutaways persist in the clip spec
 and cache in `<spec dir>/cutaways/`, so corrected re-renders keep them.
+
+### Real web footage cutaways (`--web-cutaways`)
+
+Keep the recording and show authentic footage where seeing the real thing adds
+information: a product demonstration, a robot in motion, a place or an event.
+The planner chooses at most two visual beats per clip. Wikimedia Commons search,
+metadata ranking and bounded visual inspection locate a relevant 3–8 second
+excerpt; the existing cutaway renderer keeps the podcast audio and captions.
+
+```bash
+pip install 'sofit-cli[render]'
+# First select clips and save their word timings (or use an existing spec).
+sofit episode.mp4 --clips-json episode.clips.json --titler claude-cli
+sofit --render-from episode.clips.json --render-clips out \
+      --web-cutaways --titler claude-cli
+# Conservative rights-metadata allowlist; this flag also enables web cutaways.
+sofit --render-from episode.clips.json --render-clips out \
+      --web-cutaways-safe-only --titler claude-cli
+```
+
+Needs ffmpeg/ffprobe and the existing Claude backend: a logged-in Claude Code CLI
+or `ANTHROPIC_API_KEY` with `--titler api`. Commons needs no API key or new Python
+dependency. Only small sampled JPEGs and text reach Claude, never source audio
+or entire videos. `--titler-model` also controls the visual judge.
+
+By default, license metadata is **recorded without filtering**; this mode does
+not establish permission to reuse a source. `--web-cutaways-safe-only` accepts
+reported public-domain/CC0 material or CC BY with creator, attribution and a
+recognized license URL, and rejects reported restrictions, unknown/custom
+licenses, NC, ND and ShareAlike. It is a metadata filter, not a rights-clearance
+service. Creator, source/media URLs, license, attribution requirements, retrieval
+time and the selected source timestamps stay in the spec and in
+`out/<clip-id>.sources.json`. Use those credits when publishing; Sofit does not
+publish or burn attribution text into the video automatically.
+
+The editable `visual_plan` and resolved cutaways persist in the spec. Downloads
+and silent H.264 excerpts live under `$XDG_CACHE_HOME/sofit/footage` (default
+`~/.cache/sofit/footage`), outside the project. A normal `--render-from` reuses
+the assets without searching or calling a model. Remove a clip's `visual_plan`
+and its associated cutaways to replan. Missing assets fall back to the recording;
+run with `--web-cutaways` again to retrieve/resolve them.
+
+Add `--cutaways` to allow the existing generated-image fallback (needs
+`GEMINI_API_KEY`); add `--animate` for that fallback's optional animation.
+Search, download, low confidence or model failure otherwise keeps the recording.
+Web footage is silent, aspect-preserving and letterboxed by default; set its
+cutaway's `fit` to `cover` for a centered crop. Works with video and audiograms,
+but not the full replacement `--storyboard` mode. The feature is opt-in;
+existing commands retain their behavior.
+
+See [the architecture and limits](docs/web-footage.md) for the provider/API
+contract, cost bounds and limitations.
 
 ### Close the loop: log every post (`sofit publish-log`)
 
