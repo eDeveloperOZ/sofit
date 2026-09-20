@@ -20,6 +20,8 @@ Caption rendering has two paths:
 
 from __future__ import annotations
 
+from .footage_progress import measured
+
 import json
 import os
 import shutil
@@ -1900,6 +1902,7 @@ def _audiogram_cmd(source_video: Path, padded_start: float, duration: float,
 # ffmpeg runner + clip extraction
 # ---------------------------------------------------------------------------
 
+@measured("ffmpeg")
 def _run_ffmpeg(cmd: list[str]) -> None:
     """Run an ffmpeg command and raise with a useful error on failure."""
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
@@ -2207,6 +2210,7 @@ def _concat_parts(parts: list[Path], output_path: Path) -> None:
             p.unlink(missing_ok=True)
 
 
+@measured("render")
 def render_clips(video_path: str, clips: list[dict], out_dir: str,
                  aspect: str = "9:16", subtitles: bool = True,
                  speed: float = 1.0, font: str | None = None,

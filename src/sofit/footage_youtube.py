@@ -5,6 +5,8 @@ configuration, plugins, playlists or generic website extractors are loaded.
 """
 from __future__ import annotations
 
+from .footage_progress import measured
+
 import importlib.util
 import base64
 import json
@@ -42,6 +44,7 @@ def youtube_url(url: str) -> str | None:
     return f"https://www.youtube.com/watch?v={video_id}" if re.fullmatch(r"[\w-]{11}", video_id, re.ASCII) else None
 
 
+@measured("metadata")
 def _extract(target: str, flat: bool = False) -> dict:
     if not available():
         raise FootageError("YouTube footage needs the youtube extra: pip install 'sofit-cli[youtube]'")

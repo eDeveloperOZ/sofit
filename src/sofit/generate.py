@@ -13,6 +13,8 @@ actually matches the segment it selected.
 
 from __future__ import annotations
 
+from .footage_progress import measured
+
 import json
 import os
 import re
@@ -186,6 +188,7 @@ def _image_content(user: str, images: list[Path]) -> list[dict]:
          "data": base64.b64encode(p.read_bytes()).decode()}} for p in images]
 
 
+@measured("claude")
 def _call_api(system: str, user: str, model: str, images: list[Path] | None = None) -> str:
     """Transport: Anthropic API (per-token billing; needs ANTHROPIC_API_KEY)."""
     content = _image_content(user, images) if images else user
@@ -194,10 +197,12 @@ def _call_api(system: str, user: str, model: str, images: list[Path] | None = No
         max_tokens=4096,
         system=system,
         messages=[{"role": "user", "content": content}],
+        **({"timeout": float(os.environ.get("SOFIT_VISUAL_TIMEOUT", "180"))} if images else {}),
     )
     return "".join(b.text for b in msg.content if b.type == "text").strip()
 
 
+@measured("claude")
 def _call_claude_cli(system: str, user: str, model: str,
                      images: list[Path] | None = None) -> str:
     """Transport: the `claude -p` CLI (uses your Claude Code / Pro/Max subscription,
@@ -233,17 +238,19 @@ def _call_claude_cli(system: str, user: str, model: str,
            if k != "ANTHROPIC_BASE_URL"
            and not k.startswith(("CLAUDE_CODE_", "CLAUDE_"))
            and k not in ("CLAUDECODE", "AI_AGENT")}
+    timeout = min(CLI_TIMEOUT, float(os.environ.get("SOFIT_VISUAL_TIMEOUT", "180"))) if images else CLI_TIMEOUT
     try:
         proc = subprocess.run(
             cmd, env=env,
-            input=user, capture_output=True, text=True, timeout=CLI_TIMEOUT,
+            input=user, capture_output=True, text=True,
+            timeout=timeout,
         )
     except subprocess.TimeoutExpired:
         # 300s was too tight for real work: a 66-min episode (981 segments) asking
         # for 8 clips x 3 hook lines each blew through it. Raise SOFIT_CLI_TIMEOUT
         # for longer episodes, or ask for fewer candidates.
         raise TimeoutError(
-            f"claude CLI exceeded {CLI_TIMEOUT}s. Raise SOFIT_CLI_TIMEOUT, ask for "
+            f"claude CLI exceeded {timeout:g}s. Check SOFIT_CLI_TIMEOUT / SOFIT_VISUAL_TIMEOUT, ask for "
             "fewer candidates (--n), or use --titler api."
         ) from None
     if proc.returncode != 0:

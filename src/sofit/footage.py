@@ -92,6 +92,15 @@ class Candidate:
     cache_url: str = ""
 
 
+def candidate_from_dict(data: dict) -> Candidate:
+    """Restore nested timed text from a JSON cache manifest."""
+    data = dict(data)
+    data["cues"] = tuple(c if isinstance(c, Cue) else Cue(**c) for c in data.get("cues", ()))
+    data["tags"] = tuple(data.get("tags", ()))
+    data["subtitle_urls"] = tuple(data.get("subtitle_urls", ()))
+    return Candidate(**data)
+
+
 class FootageProvider(Protocol):
     """A provider owns discovery and optional timed text, not downloading/rendering."""
 
@@ -279,6 +288,9 @@ def rank_candidates(candidates: list[Candidate], intent: VisualIntent,
                 or not license_allowed(c, safe_only)):
             continue
         if not (c.provider == "direct" and c.source_url in intent.source_urls) and not matches_subject(c, intent.required_terms):
+            from .footage_progress import count, event
+            count("subject_rejections")
+            event("candidate_rejected", reason="required_subject_not_in_metadata", source=hashlib.sha256(c.source_url.encode()).hexdigest()[:12])
             continue
         try:
             published = date.fromisoformat(c.published_at) if c.published_at else None
@@ -366,6 +378,7 @@ class FootageCache:
         self.limits = limits
 
     def retrieve(self, candidate: Candidate) -> tuple[Path, dict]:
+        from .footage_progress import count, stage
         url = canonical_url(candidate.media_url)
         identity = canonical_url(candidate.cache_url or url)
         key = hashlib.sha256(identity.encode()).hexdigest()
@@ -378,6 +391,7 @@ class FootageCache:
                 if (saved.get("identity", saved["url"]) == identity and saved["size"] == media.stat().st_size
                         and saved["sha256"] == _hash(media)):
                     probe_video(media, self.limits)
+                    count("cache_hit")
                     return media, saved
             except (OSError, ValueError, KeyError, FootageError):
                 pass  # recover an interrupted/corrupt cache, without reusing its bytes
@@ -385,31 +399,35 @@ class FootageCache:
             raise FootageError("source exceeds duration limit")
         if candidate.size is not None and candidate.size > self.limits.max_bytes:
             raise FootageError("source exceeds file size limit")
+        count("cache_miss")
         fd, temp_name = tempfile.mkstemp(dir=directory, suffix=".part")
         temp = Path(temp_name)
         try:
-            deadline = time.monotonic() + self.limits.download_seconds
-            with os.fdopen(fd, "wb") as f, open_url(url, self.limits.timeout) as response:
-                if getattr(response, "status", 200) != 200:
-                    raise FootageError("unexpected partial footage response")
-                expected = response.headers.get("Content-Length")
-                expected = int(expected) if expected is not None else None
-                if expected is not None and not 0 < expected <= self.limits.max_bytes:
-                    raise FootageError("source exceeds file size limit")
-                size = 0
-                for chunk in iter(lambda: response.read1(64 * 1024), b""):
-                    size += len(chunk)
-                    if size > self.limits.max_bytes or time.monotonic() > deadline:
-                        raise FootageError("footage download exceeded size/time limit")
-                    f.write(chunk)
-                if expected is not None and size != expected:
-                    raise FootageError("partial footage download")
-            info = probe_video(temp, self.limits)
-            saved = {"url": url, "identity": identity, "size": size, "sha256": _hash(temp),
-                     "retrieved_at": datetime.now(timezone.utc).isoformat(),
-                     "candidate": json.loads(json.dumps(asdict(candidate))), "video": asdict(info)}
-            os.replace(temp, media)
-            write_json(meta, saved)
-            return media, saved
+            with stage("download"):
+                deadline = time.monotonic() + self.limits.download_seconds
+                with os.fdopen(fd, "wb") as f, open_url(url, self.limits.timeout) as response:
+                    if getattr(response, "status", 200) != 200:
+                        raise FootageError("unexpected partial footage response")
+                    expected = response.headers.get("Content-Length")
+                    expected = int(expected) if expected is not None else None
+                    if expected is not None and not 0 < expected <= self.limits.max_bytes:
+                        raise FootageError("source exceeds file size limit")
+                    size = 0
+                    for chunk in iter(lambda: response.read1(64 * 1024), b""):
+                        size += len(chunk)
+                        count("bytes_downloaded", len(chunk))
+                        if size > self.limits.max_bytes or time.monotonic() > deadline:
+                            raise FootageError("footage download exceeded size/time limit")
+                        f.write(chunk)
+                    if expected is not None and size != expected:
+                        raise FootageError("partial footage download")
+                info = probe_video(temp, self.limits)
+                saved = {"url": url, "identity": identity, "size": size, "sha256": _hash(temp),
+                         "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                         "candidate": json.loads(json.dumps(asdict(candidate))), "video": asdict(info)}
+                os.replace(temp, media)
+                write_json(meta, saved)
+                count("downloads_done")
+                return media, saved
         finally:
             temp.unlink(missing_ok=True)
