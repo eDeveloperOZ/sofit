@@ -300,7 +300,7 @@ def plan_cutaways(clip: dict, titler: str = "api", web: bool = False,
         dur = float(rng["end"]) - float(rng["start"])
         timed = " ".join(f'[{float(w["t"]):.1f}]{w.get("w", "")}'
                          for w in (rng.get("words") or []))
-        span_texts.append(f"span {i} (0..{dur:.1f}s): {timed}")
+        span_texts.append(f"span {i} (0..{dur:.6f}s): {timed}")
     system = (
         "You pick CUTAWAY moments for a talking-head podcast clip: short "
         "generated illustration shots spliced over the footage while the "

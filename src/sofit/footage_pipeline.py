@@ -326,7 +326,6 @@ class FootageSession:
                     else []
                 )
             )
-            from .footage_selection import _search
 
             def search(query):
                 key = (
@@ -336,7 +335,11 @@ class FootageSession:
                     intent.published_after,
                     intent.preferred_channels,
                 )
-                return self._once(self.resolved, key, lambda: _search(providers, query))
+                return self._once(
+                    self.resolved,
+                    key,
+                    lambda: self._search_cached(providers, query, key),
+                )
 
             candidates = search(intent.query)
             from .footage import channel_preference
@@ -375,6 +378,44 @@ class FootageSession:
             (c, self._analysis_future(c, intent) if n == 0 else None)
             for n, c in enumerate(ranked[:2])
         ]
+
+    def _search_cached(self, providers, query, key):
+        from .footage_selection import _search
+
+        # Only built-in providers have a stable cross-process configuration.
+        # Library-injected providers retain their existing per-run cache contract.
+        if self.providers is not None:
+            return _search(providers, query)
+        identity = json.dumps(["search-v1", key, [p.name for p in providers]])
+        directory = self.cache.root / hashlib.sha256(identity.encode()).hexdigest()
+        manifest = directory / "metadata.json"
+        try:
+            saved = json.loads(manifest.read_text())
+            if (
+                saved["key"] == identity
+                and 0 <= time.time() - saved["saved_at"] < 3600
+                and isinstance(saved["candidates"], list)
+                and 0 < len(saved["candidates"]) <= 16
+            ):
+                candidates = [candidate_from_dict(c) for c in saved["candidates"]]
+                touch(directory)
+                progress.count("search_cache_hit")
+                progress.count("cache_hit")
+                return candidates
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        candidates = _search(providers, query)[:16]
+        # Empty/failed searches should recover immediately when a provider recovers.
+        if candidates:
+            write_json(
+                manifest,
+                {
+                    "key": identity,
+                    "saved_at": time.time(),
+                    "candidates": [asdict(c) for c in candidates],
+                },
+            )
+        return candidates
 
     def _analysis_future(self, candidate, intent):
         with self.lock:

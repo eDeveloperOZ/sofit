@@ -260,6 +260,46 @@ def test_queued_analysis_batches_actions_discovered_during_first_pass(
     assert len(downloads) == 1
 
 
+def test_search_cache_reuses_results_expires_and_does_not_cache_failures(
+    tmp_path, monkeypatch
+):
+    from sofit import footage_selection
+    from types import SimpleNamespace
+
+    candidate = f.Candidate(
+        "youtube",
+        "https://www.youtube.com/watch?v=abcdefghijk",
+        "https://example.org/video.mp4",
+        "Robot",
+        20,
+        320,
+        240,
+    )
+    calls, replies = [], [[candidate], [candidate], [], []]
+
+    def search(providers, query):
+        calls.append(query)
+        return replies.pop(0)
+
+    monkeypatch.setattr(footage_selection, "_search", search)
+    cache = f.FootageCache(tmp_path / "cache")
+    providers = [SimpleNamespace(name="youtube")]
+
+    def lookup(query="robot"):
+        with pipeline.FootageSession(cache, GreenJudge()) as session:
+            return session._search_cached(providers, query, ("search", query))
+
+    assert lookup() == lookup() == [candidate]
+    assert calls == ["robot"]
+    manifest = next(cache.root.glob("*/metadata.json"))
+    saved = json.loads(manifest.read_text())
+    saved["saved_at"] -= 3601
+    manifest.write_text(json.dumps(saved))
+    assert lookup() == [candidate] and len(calls) == 2
+    assert lookup("unavailable") == lookup("unavailable") == []
+    assert len(calls) == 4
+
+
 def test_quota_failure_stops_launches_and_is_not_persisted_as_negative_evidence(
     tmp_path, monkeypatch
 ):

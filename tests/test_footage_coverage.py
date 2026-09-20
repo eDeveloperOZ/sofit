@@ -60,6 +60,19 @@ def test_clip_spec_retains_topic_introduction_outside_kept_words():
     assert clip["words"] == [{"t": 0, "d": 1, "w": "56"}]
 
 
+def test_planner_receives_exact_fractional_span_duration(monkeypatch):
+    import re
+
+    def call(system, user, validate, **kwargs):
+        limit = float(re.search(r"span 0 \(0\.\.([\d.]+)s\)", user)[1])
+        assert limit == pytest.approx(7.04)
+        return validate({"cutaways": [beat(0, limit)]})
+
+    monkeypatch.setattr(sb, "call_claude_json", call)
+    plan = sb.plan_cutaways({"start": 3210.64, "end": 3217.68}, web=True, coverage=90)
+    assert plan[0]["end"] == pytest.approx(7.04)
+
+
 def test_coverage_does_not_report_floating_point_zero_length_gaps(tmp_path):
     asset = tmp_path / "asset.mp4"
     asset.write_bytes(b"video")

@@ -105,7 +105,11 @@ the required subject/version without action adjectives. It never relaxes identit
 Explicit bare-file links have no subject metadata, so rely on their editorial
 selection and the same visual evidence gate. Verified `source_urls` remain the
 strongest way to pin research-backed sources. Search/link discovery is cached
-within a run, including repeated publisher queries across beats.
+within a run, including repeated publisher queries across beats. Successful
+built-in provider search results also persist for one hour, keyed by query,
+provider set, date/recent filters and publisher preference. This stabilizes warm
+runs without suppressing fresh results indefinitely; empty/failed searches are
+not persisted. Library-injected providers retain per-run caching only.
 
 Ranking uses English token overlap across title, description/tags and supplied
 cues; dimensions and duration only break relevant ties. Rights filtering happens
