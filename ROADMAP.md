@@ -117,3 +117,10 @@ scorer learn from what actually held viewers, rather than from research priors.
     identical peaks, so there was nothing to mask.
   No code was written for this - the test ran as a throwaway ffmpeg pass, which is why
   there is nothing to revert.
+
+Batch footage acquisition now shares source indexes and versioned visual evidence,
+combines multiple verified excerpts per beat, and renders clips as ready. Progress
+and cache lifecycle commands support small cold/warm validation; see
+[performance validation](docs/footage-performance.md). Broad real-source quality
+and throughput evaluation remains necessary; fixture coverage is not a guarantee
+of equivalent coverage on arbitrary topics.

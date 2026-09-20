@@ -122,6 +122,20 @@ native web-cutaway pipeline. Keep the usual clip-selection workflow, then:
   Home path), install editable with `uv pip install --python "$HC/.venv/bin/python"
   -e "${HC}[dev,mcp,render,youtube]"`, and verify `"$PY" -c "import sofit; print(sofit.__file__)"`
   points into that checkout. Do not silently use a global/PyPI executable.
+- Validate 2–3 representative clips before a large web-footage batch: include a
+  previous gap, partial success and a shared source. Use `--progress` and
+  `--progress-file out/progress.jsonl`; do not hide the run behind `tail`.
+  Read `footage-metrics.json` and each `.coverage.json`, then inspect actual frames.
+- Sources, frame indexes and action-specific evidence are now reused across clips.
+  A longer beat can combine several verified excerpts. Do not manufacture dozens
+  of tiny beats to compensate for selection, or subtract 0.05 seconds at exact
+  span ends; Sofit handles both cases. Preserve precise topic/action constraints.
+- Quota/authentication failures stop model requests for the run. Report the blocker
+  and coverage gaps; do not immediately retry a full episode or promise a speedup
+  based on a synthetic benchmark. Restart a small subset after service recovery.
+- Use `sofit cache status` and `sofit cache prune --dry-run` before cleanup. Pruning
+  understands legacy artifacts and protects active sessions. Never delete or move
+  an episode's output directory as a cache-cleanup workaround.
 - For audio-only sources, web mode targets 85% moving-footage coverage by default.
   Use `--footage-coverage 90` when most of the clip should be real video; `0`
   requests sparse cutaways (the default over an existing video). This is a target,

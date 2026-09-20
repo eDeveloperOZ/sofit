@@ -220,6 +220,34 @@ cutaway's `fit` to `cover` for a centered crop. Works with video and audiograms,
 but not the full replacement `--storyboard` mode. The feature is opt-in;
 existing commands retain their behavior.
 
+For batches, source downloads, frame indexes and action-specific visual evidence
+are shared across clips and persisted. A beat can use several verified excerpts;
+you do not need to split it into many tiny beats. Clips render and checkpoint as
+they become ready while later source jobs continue. Start with 2–3 representative
+clips and inspect their coverage before running a whole episode:
+
+```bash
+sofit --render-from subset.clips.json --render-clips subset-out \
+  --web-cutaways --footage-coverage 90 --titler claude-cli \
+  --footage-workers 2 --progress --progress-file subset-out/progress.jsonl
+sofit cache status
+sofit cache prune --dry-run
+```
+
+`--progress json` emits JSONL on stderr; the optional progress file records events
+in either mode. `footage-metrics.json` in the output directory summarizes timings,
+bytes, cache hits, source analyses and model calls. A quota/authentication failure
+stops further model requests for that run; cached evidence remains usable and
+uncovered sections retain the recording. Coverage targets remain targets.
+
+The managed footage cache defaults to 4 GiB and 30 days since last use; active
+sessions protect their assets from eviction. `sofit cache prune` applies those
+limits and removes stale temporary files; `sofit cache clean --dry-run` previews
+removing all managed footage. Transcript caches and final outputs are untouched.
+Pruned cutaway assets need web mode to rebuild before an offline rerender. See
+[performance validation](docs/footage-performance.md) for counters and a repeatable
+small cold/warm benchmark.
+
 See [the architecture and limits](docs/web-footage.md) for the provider/API
 contract, cost bounds and limitations.
 

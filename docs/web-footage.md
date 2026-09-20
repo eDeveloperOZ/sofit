@@ -110,30 +110,79 @@ cues; dimensions and duration only break relevant ties. Rights filtering happens
 before any download. At most eight results per provider and two candidates per
 beat proceed to download and visual inspection.
 
-Up to three matching subtitle windows produce at most 12 coarse frames. Without
-matching subtitles, 12 evenly spaced frames cover the source. The strongest
-visible match gets fine review over twice the requested excerpt duration: up to
-25 frames for shots <=8s, up to 61 for longer shots (roughly one-second spacing
-even at 30s). Each model batch is limited to 25 images. A window must have at least three observations, all scoring
-at least 0.75, including end-boundary evidence. Low-scoring samples cannot be
-bridged. Exact boundaries stay inside the actual probed source duration.
+The CLI uses a `FootageSession` shared by all selected clips. A source is acquired
+once, decoded once into a persistent one-frame-per-second index (640px maximum,
+600 frames maximum), then analyzed for its distinct requested visual actions.
+Equivalent intents share evidence independent of beat duration or query wording;
+a different action or required identity needs its own evidence. Direct URLs are
+registered before workers start, allowing up to four actions in one visual call.
+Search-discovered actions arriving later reuse existing frames/evidence and only
+analyze missing actions.
 
-This costs at most four visual batches per candidate (each has the shared JSON
-helper's single retry), not one model call per video frame. Sparse sampling can
-miss brief actions, and models can misidentify subjects; the confidence score is
-a judgment, not a calibrated probability. Inspect the resulting cutaway before
-publication. Unknown/missing subtitles never trigger full-source transcription.
+Each action group starts with at most 24 coarse frames. Available subtitles can
+guide half the coarse samples; missing subtitles never trigger transcription.
+Up to three separated promising areas per action receive contiguous one-second
+sampling, with at most 96 additional frames per group. Calls contain at most 25
+images and four actions: at most five image batches per group, each with the
+shared JSON helper's single retry. The score threshold remains 0.75; a range
+requires three consecutive observations, and low/unobserved gaps cannot be bridged.
+Boundaries stay within the probed source duration. Sparse coarse sampling can
+miss brief actions; these judgments are not calibrated probabilities.
+
+Analysis returns multiple verified ranges. Beat selection can concatenate several
+of them without changing the podcast timeline. Previously allocated source
+intervals are not repeated across the batch just to inflate coverage. Insufficient
+evidence leaves a reported gap. Exact span ends tolerate floating-point error up
+to one microsecond and clamp to the span, so editors need no 0.05-second workaround.
+The existing `select_segment` library function remains available for single-shot
+callers; the CLI batch path uses the shared index instead.
 
 ## Cache, media and failure boundaries
 
 The cache is under the same XDG convention as transcription, in `sofit/footage`.
 A canonical HTTPS URL keys the original; YouTube uses canonical video+format
-identity so rotating signed URLs do not redownload cached bytes. Its content hash, candidate metadata,
-intent and judge version/model key each selected excerpt. Metadata sits alongside
-media. Atomic writes and unique temporary files prevent partial files becoming
-cache hits; size/hash/probe checks recover missing or corrupt entries. Concurrent
-cold requests may download the same source, but publish complete files atomically.
-There is no automatic eviction; delete this cache directory to reclaim space.
+identity so rotating signed URLs do not redownload cached bytes. Existing media
+manifests are reused. Uncached URL metadata has a one-hour TTL; subtitle results
+have a one-day TTL. Expired YouTube download URLs are refreshed once if a cached
+source needs repair. Atomic publication and size/hash/probe checks reject partial
+or corrupt media.
+
+Versioned evidence is keyed by source content hash, visual action, required
+identity and judge/model version. Both positive and negative judgments persist;
+service errors do not become negative evidence. Normalized excerpts are keyed by
+source hash and selected times. A warm run can reuse evidence without frame
+extraction or model calls. Editing the action or changing the judge invalidates
+that evidence. A cache hit does not refresh upstream rights metadata.
+
+Discovery and source processing each use a bounded pool, default two workers
+(`--footage-workers 1..8`). Model work defaults to one concurrent call
+(`SOFIT_FOOTAGE_JUDGE_WORKERS=1..4`); distinct actions share image batches when
+possible. Visual requests have a 180-second default transport timeout, configurable
+with `SOFIT_VISUAL_TIMEOUT`. Automatic planning still runs per clip before source
+jobs are registered. Each completed clip checkpoints its spec and renders through
+the existing renderer while later sources continue processing. No second renderer
+or change to original audio/caption timing is involved.
+
+`sofit cache status` reports managed bytes/files and temporary bytes/files.
+`sofit cache prune [--dry-run]` evicts least-recently-used source groups over 4 GiB
+or unused for 30 days and removes temporary files older than 24 hours.
+`--max-size-mb`, `--max-age-days` and `--temp-age-hours` override those prune limits.
+`sofit cache clean [--dry-run]` removes all recognized footage artifacts. These
+commands understand the earlier cache layout and do not touch transcripts,
+user input files, final outputs, unknown files or symlink targets.
+
+Sessions prune before/after work, hold process leases against eviction, and reserve
+space before cold acquisition. `SOFIT_FOOTAGE_CACHE_GB` changes the session budget.
+The budget is a managed-cache limit, not a hard filesystem quota: concurrent
+normalization/frame intermediates may temporarily exceed it. Cross-process locks
+serialize analysis; in-process futures share successful and failed acquisition.
+Independent processes may still race to download a cold source. Eviction removes
+entire source groups; saved specs pointing to evicted excerpts need web mode to
+rebuild them. Without it, missing assets fall back to the original recording.
+
+A quota/authentication/rate-limit failure prevents additional model launches for
+that session; persisted successful evidence can still be used. See
+[performance validation](footage-performance.md) for progress and profiling.
 
 Defaults: 256 MiB, 600 source seconds, 30-second socket/probe timeout,
 180-second download budget, 120-second normalization timeout, 7680px maximum
