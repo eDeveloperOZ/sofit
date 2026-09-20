@@ -18,11 +18,13 @@ from .footage import (
     probe_video,
     write_json,
     relevance,
+    candidate_from_dict,
 )
 from .footage_progress import analyzed, count, stage
 from .footage_selection import Frame, MIN_CONFIDENCE, _scores
 
 VERSION = 1
+EVIDENCE_VERSION = 2
 
 
 def semantic_key(intent: VisualIntent):
@@ -132,7 +134,7 @@ def evidence(
     results, pending = {}, {}
     for key, intent in unique.items():
         identity = {
-            "version": VERSION,
+            "version": EVIDENCE_VERSION,
             "media": metadata["sha256"],
             "semantic": key,
             "judge": judge.cache_key,
@@ -205,7 +207,11 @@ def evidence(
                 selected = indices[start : start + 25]
                 batch = [frames[i] for i in selected]
                 with stage("judge"):
-                    if hasattr(judge, "score_many"):
+                    if metadata.get("candidate") and hasattr(judge, "score_source"):
+                        scores = judge.score_source(
+                            batch, requested, candidate_from_dict(metadata["candidate"])
+                        )
+                    elif hasattr(judge, "score_many"):
                         scores = judge.score_many(batch, requested)
                     else:
                         scores = [_scores(judge, batch, intent) for intent in requested]

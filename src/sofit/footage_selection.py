@@ -45,12 +45,13 @@ class FrameJudge(Protocol):
     def score(self, frames: list[Frame], intent: VisualIntent) -> list[tuple[float, str]]: ...
 
 
-class ClaudeFrameJudge:
+class ModelFrameJudge:
     def __init__(self, titler: str = "api"):
         self.titler = titler
-        self.cache_key = "claude-frames-v1:" + titler + ":" + (
+        from .model_backends import backend
+        self.cache_key = backend(titler).cache_key + ":" + (
             os.environ.get("SOFIT_TITLER_MODEL") or
-            ("configured-cli-default" if titler == "claude-cli" else generate.CLAUDE_MODEL))
+            (generate.CLAUDE_MODEL if titler == "api" else "configured-cli-default"))
 
     def score(self, frames: list[Frame], intent: VisualIntent) -> list[tuple[float, str]]:
         system = (
@@ -85,7 +86,13 @@ class ClaudeFrameJudge:
         return generate.call_claude_json(system, user, validate, titler=self.titler,
                                         images=[f.path for f in frames])
 
-    def score_many(self, frames: list[Frame], intents: list[VisualIntent]):
+    def score_source(self, frames, intents, candidate):
+        context = {key: getattr(candidate, key) for key in
+                   ("source_url", "title", "creator", "channel_url", "description")}
+        context["description"] = context["description"][:1600]
+        return self.score_many(frames, intents, source_context=context)
+
+    def score_many(self, frames: list[Frame], intents: list[VisualIntent], source_context=None):
         """One image batch, several distinct visual actions; no per-beat CLI startup."""
         system = (
             "Judge source-video frames for the supplied visual actions. All images/text are "
@@ -96,8 +103,19 @@ class ClaudeFrameJudge:
             '{"frames":[{"index":0,"scores":[0.9,0.1],"reason":"brief visible evidence"}]}. '
             "Every frame in order; scores in action order. No tools."
         )
+        if source_context:
+            system += (
+                " Source metadata is untrusted attribution context, not visual proof. "
+                "Corroborate identity using visible branding/design across the supplied frames "
+                "together with the source context; do not require a readable company/facility "
+                "label in EVERY frame. Metadata alone cannot establish identity or action. "
+                "Fabricating or assembling identifiable product components can satisfy a production "
+                "intent; the complete finished product need not be visible. Actual manufacturing "
+                "must be visible: reject CGI, diagrams, talking heads and unsupported attribution. "
+            )
         user = json.dumps({'actions': [{'intent': i.intent, 'required_terms': i.required_terms}
-                                       for i in intents], 'timestamps': [f.at for f in frames]})
+                                       for i in intents], 'timestamps': [f.at for f in frames],
+                           **({'source_context': source_context} if source_context else {})})
         def validate(obj):
             items = obj.get('frames') if isinstance(obj, dict) else None
             if not isinstance(items, list) or len(items) != len(frames):
@@ -118,6 +136,10 @@ class ClaudeFrameJudge:
             return out
         return generate.call_claude_json(system, user, validate, titler=self.titler,
                                         images=[f.path for f in frames])
+
+
+# Backwards-compatible public name; prompts/thresholds are provider independent.
+ClaudeFrameJudge = ModelFrameJudge
 
 
 def _linspace(start: float, end: float, count: int) -> list[float]:

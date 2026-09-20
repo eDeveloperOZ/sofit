@@ -278,9 +278,11 @@ def _call_claude_cli(system: str, user: str, model: str,
 
 def call_claude_json(system: str, user: str, validate, model: str | None = None,
                      titler: str = "api", images: list[Path] | None = None):
-    """Call Claude, parse a JSON body, validate it, retry once on failure.
+    """Call the selected model backend, validate JSON, retry once on invalid output.
 
-    `titler`: "api" (Anthropic API + key) or "claude-cli" (`claude -p`, subscription).
+    The historical function name is retained for library compatibility.
+
+    `titler`: "api" (Anthropic), "claude-cli", "codex-cli", or a registered backend.
     `model`: explicit model id; falls back to the SOFIT_TITLER_MODEL env var
     (set by the --titler-model CLI flag), then the CLAUDE_MODEL default.
     `validate(obj)` must return the accepted value or raise GenerationError.
@@ -288,17 +290,21 @@ def call_claude_json(system: str, user: str, validate, model: str | None = None,
     callers retain their existing transport behavior.
     Raises GenerationError after the retry is exhausted.
     """
-    model = model or os.environ.get("SOFIT_TITLER_MODEL") or CLAUDE_MODEL
-    transport = _call_claude_cli if titler == "claude-cli" else _call_api
+    from .model_backends import backend
+    model = model or os.environ.get("SOFIT_TITLER_MODEL") or (
+        CLAUDE_MODEL if titler in {"api", "claude-cli"} else "")
+    transport = backend(titler).transport
     last_err: Exception | None = None
     for _ in range(2):
-        text = (transport(system, user, model, images=images) if images
-                else transport(system, user, model))
+        from .footage_progress import stage
+        with stage("model"):
+            text = (transport(system, user, model, images=images) if images
+                    else transport(system, user, model))
         try:
             return validate(json.loads(_strip_fences(text)))
         except (json.JSONDecodeError, GenerationError) as e:
             last_err = e
-    raise GenerationError(f"Claude returned unusable output after retry: {last_err}")
+    raise GenerationError(f"Model returned unusable output after retry: {last_err}")
 
 
 def _strip_fences(text: str) -> str:
