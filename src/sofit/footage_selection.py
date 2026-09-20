@@ -203,28 +203,64 @@ def find_footage(intent: VisualIntent, providers: list[FootageProvider] | None =
                  titler: str = "api", safe_only: bool = False) -> dict | None:
     """Search -> rank -> cached download -> select -> silent asset + provenance.
 
-    At most two candidates per beat are downloaded and visually evaluated.
+    At most two ranked candidates per beat are visually evaluated. Explicit
+    direct links also need bounded downloads to probe their unknown metadata.
     Expected external failures are isolated per provider/candidate; no result
     is a normal outcome. Callers can retain the original video or generate art.
     """
+    cache = cache or FootageCache()
     if providers is None:
         from .footage_commons import CommonsProvider
+        from .footage_youtube import YouTubeProvider, available
         providers = [CommonsProvider()]
-    cache = cache or FootageCache()
+        if available():
+            providers.append(YouTubeProvider(intent.prefer_recent, intent.published_after))
+        elif not intent.source_urls:
+            print("note: install the youtube extra to search YouTube footage; using Commons", file=sys.stderr)
     judge = judge or ClaudeFrameJudge(titler)
     candidates = []
-    for provider in providers:
-        try:
-            candidates.extend(provider.search(intent.query, limit=8))
-        except Exception as e:  # provider/plugin boundary; enhancement only
-            print(f"warning: footage search ({provider.name}): {type(e).__name__}", file=sys.stderr)
+    if intent.source_urls:
+        from .footage_direct import DirectProvider
+        from .footage_youtube import YouTubeProvider, youtube_url
+        from dataclasses import replace
+        from .footage import canonical_url
+        direct, youtube = DirectProvider(), YouTubeProvider()
+        providers = [direct, youtube]
+        urls = tuple(dict.fromkeys(youtube_url(u) or canonical_url(u) for u in intent.source_urls))
+        intent = replace(intent, source_urls=urls)
+        for url in urls:
+            try:
+                if youtube_url(url):
+                    from .footage_youtube import available
+                    if not available():
+                        print("warning: YouTube links need the youtube extra", file=sys.stderr)
+                        continue
+                    c = youtube.resolve(url)
+                elif safe_only or intent.published_after:
+                    continue  # direct files have no independently supplied rights/date metadata
+                else:
+                    c = direct.resolve(url, cache)
+                if c:
+                    candidates.append(c)
+            except Exception as e:
+                print(f"warning: footage link: {type(e).__name__}", file=sys.stderr)
+    else:
+        for provider in providers:
+            try:
+                candidates.extend(provider.search(intent.query, limit=8))
+            except Exception as e:  # provider/plugin boundary; enhancement only
+                print(f"warning: footage search ({provider.name}): {type(e).__name__}", file=sys.stderr)
     ranked = rank_candidates(candidates, intent, safe_only, cache.limits)
     for candidate in ranked[:2]:
         try:
             media, metadata = cache.retrieve(candidate)
+            identity = asdict(candidate)
+            if candidate.cache_url:
+                for field in ("media_url", "original_media_url", "subtitle_urls"):
+                    identity.pop(field, None)
             key = hashlib.sha256(json.dumps({
                 "version": 1, "media": metadata["sha256"], "intent": asdict(intent),
-                "candidate": asdict(candidate),
+                "candidate": identity,
                 "judge": judge.cache_key,
             }, sort_keys=True).encode()).hexdigest()
             selected_path = media.parent / (key + ".json")
@@ -251,7 +287,7 @@ def find_footage(intent: VisualIntent, providers: list[FootageProvider] | None =
                           **json.loads(json.dumps(asdict(candidate))),
                           "retrieved_at": metadata["retrieved_at"],
                           "judge": judge.cache_key,
-                          "selection": asdict(segment), "intent": asdict(intent),
+                          "selection": asdict(segment), "intent": json.loads(json.dumps(asdict(intent))),
                           "modifications": "Temporal excerpt; audio removed; scaled to fit the cutaway."}}
             write_json(selected_path, result)
             return result

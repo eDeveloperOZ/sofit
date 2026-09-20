@@ -109,7 +109,7 @@ def test_pipeline_caches_selection_and_provenance(monkeypatch, tmp_path):
     assert one["source"]["selection"]["start"] == 420
     assert one["source"]["creator"] == c.creator
     assert one["source"]["retrieved_at"].endswith("+00:00")
-    assert one["source"]["intent"] == asdict(intent)
+    assert one["source"]["intent"] == json.loads(json.dumps(asdict(intent)))
     # Corrupt normalized bytes regenerate only the selection/asset, not source bytes.
     Path(one["video"]).write_bytes(b"broken")
     assert s.find_footage(intent, [Provider()], Cache(), Judge())

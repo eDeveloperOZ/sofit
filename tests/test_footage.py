@@ -137,7 +137,7 @@ def test_cache_reuses_verifies_and_recovers(monkeypatch, tmp_path, candidate):
     monkeypatch.setattr(f, "probe_video", lambda *a: f.VideoInfo(90, 1280, 720))
     cache = f.FootageCache(tmp_path)
     media, provenance = cache.retrieve(candidate)
-    assert provenance["candidate"] == asdict(candidate)
+    assert provenance["candidate"] == json.loads(json.dumps(asdict(candidate)))
     assert provenance["retrieved_at"].endswith("+00:00")
     assert cache.retrieve(replace(candidate, media_url=candidate.media_url + "#other"))[0] == media
     assert len(calls) == 1

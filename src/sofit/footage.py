@@ -20,7 +20,7 @@ import time
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -35,12 +35,21 @@ class VisualIntent:
     query: str
     duration: float
     context: str = ""
+    prefer_recent: bool = False
+    published_after: str = ""
+    source_urls: tuple[str, ...] = ()
 
     def __post_init__(self):
         if not self.intent.strip() or not self.query.strip():
             raise ValueError("footage needs a visual intent and search query")
         if not math.isfinite(self.duration) or not 2 <= self.duration <= 8:
             raise ValueError("footage duration must be between 2 and 8 seconds")
+        if self.published_after:
+            date.fromisoformat(self.published_after)
+        if len(self.source_urls) > 8:
+            raise ValueError("at most eight footage URLs per beat")
+        for url in self.source_urls:
+            canonical_url(url)
 
 
 @dataclass(frozen=True)
@@ -71,6 +80,10 @@ class Candidate:
     size: int | None = None
     subtitle_urls: tuple[str, ...] = ()
     cues: tuple[Cue, ...] = ()
+    published_at: str = ""
+    channel_url: str = ""
+    # Stable public identity for hosts whose media URLs expire (e.g. YouTube).
+    cache_url: str = ""
 
 
 class FootageProvider(Protocol):
@@ -224,7 +237,7 @@ def rank_candidates(candidates: list[Candidate], intent: VisualIntent,
     seen = set()
     for c in candidates:
         try:
-            url = canonical_url(c.media_url)
+            url = canonical_url(c.cache_url or c.media_url)
         except (FootageError, ValueError):
             continue
         if (url in seen or not math.isfinite(c.duration)
@@ -233,15 +246,29 @@ def rank_candidates(candidates: list[Candidate], intent: VisualIntent,
                 or (c.size is not None and not 0 < c.size <= limits.max_bytes)
                 or not license_allowed(c, safe_only)):
             continue
+        try:
+            published = date.fromisoformat(c.published_at) if c.published_at else None
+        except ValueError:
+            published = None
+        if intent.published_after and (published is None or published < date.fromisoformat(intent.published_after)):
+            continue
         title = relevance(intent.query, c.title)
         body = relevance(intent.query, c.description + " " + " ".join(c.tags))
         cues = relevance(intent.query, " ".join(cue.text for cue in c.cues))
         semantic = max(title, 0.85 * body, 0.9 * cues)
+        # Explicit links are editorial candidates, not evidence of visual relevance.
+        # They still require the same frame confidence gate as search results.
+        if c.source_url in intent.source_urls:
+            semantic = max(semantic, 0.5)
         if semantic < 0.35:
             continue
         seen.add(url)
         quality = min(c.width * c.height / (1920 * 1080), 1)
         score = semantic + 0.05 * quality + 0.03 * min(intent.duration / c.duration, 1)
+        if intent.prefer_recent and published is not None:
+            age = (datetime.now(timezone.utc).date() - published).days
+            if age >= 0:
+                score += 0.15 / (1 + age / 30)
         ranked.append((score, c))
     return [c for _, c in sorted(ranked, key=lambda pair: (-pair[0], pair[1].source_url))]
 
@@ -299,14 +326,15 @@ class FootageCache:
 
     def retrieve(self, candidate: Candidate) -> tuple[Path, dict]:
         url = canonical_url(candidate.media_url)
-        key = hashlib.sha256(url.encode()).hexdigest()
+        identity = canonical_url(candidate.cache_url or url)
+        key = hashlib.sha256(identity.encode()).hexdigest()
         directory = self.root / key
         directory.mkdir(parents=True, exist_ok=True)
         media, meta = directory / "source.media", directory / "source.json"
         if media.exists() and meta.exists():
             try:
                 saved = json.loads(meta.read_text(encoding="utf-8"))
-                if (saved["url"] == url and saved["size"] == media.stat().st_size
+                if (saved.get("identity", saved["url"]) == identity and saved["size"] == media.stat().st_size
                         and saved["sha256"] == _hash(media)):
                     probe_video(media, self.limits)
                     return media, saved
@@ -336,9 +364,9 @@ class FootageCache:
                 if expected is not None and size != expected:
                     raise FootageError("partial footage download")
             info = probe_video(temp, self.limits)
-            saved = {"url": url, "size": size, "sha256": _hash(temp),
+            saved = {"url": url, "identity": identity, "size": size, "sha256": _hash(temp),
                      "retrieved_at": datetime.now(timezone.utc).isoformat(),
-                     "candidate": asdict(candidate), "video": asdict(info)}
+                     "candidate": json.loads(json.dumps(asdict(candidate))), "video": asdict(info)}
             os.replace(temp, media)
             write_json(meta, saved)
             return media, saved
