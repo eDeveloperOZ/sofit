@@ -38,18 +38,24 @@ class VisualIntent:
     prefer_recent: bool = False
     published_after: str = ""
     source_urls: tuple[str, ...] = ()
+    required_terms: tuple[str, ...] = ()
+    preferred_channels: tuple[str, ...] = ()
 
     def __post_init__(self):
         if not self.intent.strip() or not self.query.strip():
             raise ValueError("footage needs a visual intent and search query")
-        if not math.isfinite(self.duration) or not 2 <= self.duration <= 8:
-            raise ValueError("footage duration must be between 2 and 8 seconds")
+        if not math.isfinite(self.duration) or not 2 <= self.duration <= 30:
+            raise ValueError("footage duration must be between 2 and 30 seconds")
         if self.published_after:
             date.fromisoformat(self.published_after)
         if len(self.source_urls) > 8:
             raise ValueError("at most eight footage URLs per beat")
         for url in self.source_urls:
             canonical_url(url)
+        for items in (self.required_terms, self.preferred_channels):
+            if (not isinstance(items, (list, tuple)) or len(items) > 8
+                    or any(not isinstance(t, str) or not t.strip() for t in items)):
+                raise ValueError("subject terms and publisher names must be lists of up to eight strings")
 
 
 @dataclass(frozen=True)
@@ -209,6 +215,32 @@ def relevance(query: str, text: str) -> float:
     return len(terms & _tokens(text)) / len(terms) if terms else 0.0
 
 
+def _phrase(text: str) -> str:
+    text = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", text.casefold())
+    return " ".join(re.findall(r"[^\W_]+", text))
+
+
+def matches_subject(candidate: Candidate, terms: tuple[str, ...]) -> bool:
+    """Require subject words and intact version numbers across publisher metadata."""
+    evidence = " " + _phrase(" ".join((candidate.title, candidate.description,
+                                      candidate.creator, *candidate.tags))) + " "
+    for term in terms:
+        if not set(_phrase(term).split()) <= set(evidence.split()):
+            return False
+        # A title may omit the company when its publisher names it. But Helix
+        # 2.0 plus a stray '5' elsewhere must never satisfy Helix 2.5.
+        for version in re.findall(r"\d+(?:\.\d+)+", term):
+            if " " + _phrase(version) + " " not in evidence:
+                return False
+    return True
+
+
+def channel_preference(creator: str, channel_url: str, channels: tuple[str, ...]) -> bool:
+    """Prefer an exact publisher name/handle; this is not verification of ownership."""
+    names = {_phrase(creator), _phrase(urllib.parse.urlsplit(channel_url).path.rsplit("/", 1)[-1])}
+    return any(_phrase(name) in names for name in channels if _phrase(name))
+
+
 def license_allowed(candidate: Candidate, safe_only: bool = False) -> bool:
     """Default records supplied rights without gating. Safe-only is an allowlist.
 
@@ -246,16 +278,23 @@ def rank_candidates(candidates: list[Candidate], intent: VisualIntent,
                 or (c.size is not None and not 0 < c.size <= limits.max_bytes)
                 or not license_allowed(c, safe_only)):
             continue
+        if not (c.provider == "direct" and c.source_url in intent.source_urls) and not matches_subject(c, intent.required_terms):
+            continue
         try:
             published = date.fromisoformat(c.published_at) if c.published_at else None
         except ValueError:
             published = None
         if intent.published_after and (published is None or published < date.fromisoformat(intent.published_after)):
             continue
-        title = relevance(intent.query, c.title)
+        title = relevance(intent.query, c.creator + " " + c.title)
         body = relevance(intent.query, c.description + " " + " ".join(c.tags))
         cues = relevance(intent.query, " ".join(cue.text for cue in c.cues))
         semantic = max(title, 0.85 * body, 0.9 * cues)
+        if intent.required_terms:
+            # A release demonstration need not list every action in its title;
+            # exact subject identity is gated above, visible action below in the VLM.
+            semantic = max(semantic, 0.75 * relevance(" ".join(intent.required_terms),
+                           c.creator + " " + c.title + " " + c.description))
         # Explicit links are editorial candidates, not evidence of visual relevance.
         # They still require the same frame confidence gate as search results.
         if c.source_url in intent.source_urls:
@@ -265,6 +304,8 @@ def rank_candidates(candidates: list[Candidate], intent: VisualIntent,
         seen.add(url)
         quality = min(c.width * c.height / (1920 * 1080), 1)
         score = semantic + 0.05 * quality + 0.03 * min(intent.duration / c.duration, 1)
+        if channel_preference(c.creator, c.channel_url, intent.preferred_channels):
+            score += 0.3
         if intent.prefer_recent and published is not None:
             age = (datetime.now(timezone.utc).date() - published).days
             if age >= 0:

@@ -139,7 +139,8 @@ def test_composition_failure_retries_recording_and_no_false_credits(monkeypatch,
     d = doc(tmp_path)
     asset = tmp_path / "video.mp4"
     asset.write_bytes(b"video")
-    d["clips"][0].update(focus=0.5, cutaways=[{"start": 4, "end": 8, "video": str(asset),
+    d["clips"][0].update(focus=0.5, footage_coverage=90, footage_coverage_report={},
+                         cutaways=[{"start": 4, "end": 8, "video": str(asset),
                                             "source": {"provider": "fake"}}])
     monkeypatch.setattr(render, "_is_audio_only", lambda *a: False)
     monkeypatch.setattr(render, "_apply_brand_overlays", lambda *a: None)
@@ -154,6 +155,9 @@ def test_composition_failure_retries_recording_and_no_false_credits(monkeypatch,
     assert len(calls) == 2 and calls[0]["cutaways"] and not calls[1]["cutaways"]
     assert Path(result[0]).read_bytes() == b"rendered original"
     assert not Path(result[0]).with_suffix(".sources.json").exists()
+    report = json.loads(Path(result[0]).with_suffix(".coverage.json").read_text())
+    assert report["achieved_percent"] == 0 and report["requested_percent"] == 90
+    assert d["clips"][0]["footage_coverage_report"] == report
 
 
 def test_safe_only_rechecks_saved_assets_even_when_planning_fails(monkeypatch, tmp_path):

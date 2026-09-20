@@ -253,3 +253,23 @@ def test_explicit_youtube_link_uses_canonical_identity_and_visual_gate(monkeypat
     c=replace(c,media_url='https://new.googlevideo.com/rotated',original_media_url='https://new.googlevideo.com/rotated',subtitle_urls=())
     assert fs.find_footage(intent,providers=[],cache=Cache(),judge=Judge()) == result
     assert len(inspected) == 1
+
+
+def test_preferred_publisher_is_resolved_before_news_and_oversized_hits(monkeypatch):
+    calls = []
+    official = 'https://www.youtube.com/watch?v=official123'
+    def extract(target, flat=False):
+        if flat:
+            return {'entries': [
+                {'url': URL, 'title': 'Figure Helix 2.5 demonstration', 'duration': 14000,
+                 'channel': 'Figure'},
+                *[{'url': 'https://www.youtube.com/watch?v=abcdefghij' + str(i),
+                   'title': 'Figure Helix 2.5 demonstration', 'duration': 30, 'channel': 'News'}
+                  for i in range(4)],
+                {'url': official, 'title': 'Helix 2.5 demonstration', 'duration': 360,
+                 'channel': 'Figure'}]}
+        calls.append(target)
+        return info(webpage_url=target)
+    monkeypatch.setattr(yt, '_extract', extract)
+    yt.YouTubeProvider(preferred_channels=('Figure',)).search('Figure Helix 2.5')
+    assert calls[0] == official and len(calls) == 4

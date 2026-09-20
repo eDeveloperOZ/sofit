@@ -2295,6 +2295,7 @@ def render_clips(video_path: str, clips: list[dict], out_dir: str,
         ]
         parts: list[Path] = []
         visual_sources = []
+        rendered_cutaways = []
         for ri, rng in enumerate(ranges):
             start = float(rng["start"])
             end = float(rng["end"])
@@ -2399,6 +2400,7 @@ def render_clips(video_path: str, clips: list[dict], out_dir: str,
             visual_sources.extend({"span": ri, "start": c["start"], "end": c["end"],
                                    **c["source"]} for c in extract_args["cutaways"]
                                   if isinstance(c.get("source"), dict))
+            rendered_cutaways.extend({**c, "span": ri} for c in extract_args["cutaways"])
             parts.append(part_path)
 
         if len(parts) > 1:
@@ -2414,6 +2416,19 @@ def render_clips(video_path: str, clips: list[dict], out_dir: str,
                 sources_path.unlink(missing_ok=True)
         except OSError as e:
             print(f"warning: could not save visual credits for {clip_id}: {e}", file=sys.stderr)
+        if "footage_coverage_report" in clip:
+            from .storyboard import footage_coverage
+            from .footage import write_json
+            report = footage_coverage({**clip, "cutaways": rendered_cutaways},
+                                      float(clip.get("footage_coverage", 0)))
+            clip["footage_coverage_report"] = report
+            try:
+                write_json(output_path.with_suffix(".coverage.json"), report)
+            except OSError as e:
+                print(f"warning: could not save footage coverage for {clip_id}: {e}", file=sys.stderr)
+            if report["achieved_percent"] + 0.1 < report["requested_percent"]:
+                print(f"warning: rendered {clip_id} has {report['achieved_percent']:g}% footage, "
+                      f"below the requested {report['requested_percent']:g}%", file=sys.stderr)
         outputs.append(str(output_path))
 
     if logo_dir:

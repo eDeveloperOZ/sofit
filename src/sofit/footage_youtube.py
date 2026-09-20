@@ -15,7 +15,7 @@ import tempfile
 from datetime import date, datetime, timezone
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-from .footage import Candidate, Cue, FootageError, canonical_url, fetch_bytes, relevance
+from .footage import Candidate, Cue, FootageError, canonical_url, channel_preference, fetch_bytes, relevance
 from .footage_commons import parse_subtitles
 
 
@@ -121,9 +121,11 @@ def normalize_candidate(info: dict) -> Candidate | None:
 class YouTubeProvider:
     name = "youtube"
 
-    def __init__(self, prefer_recent: bool = False, published_after: str = ""):
+    def __init__(self, prefer_recent: bool = False, published_after: str = "",
+                 preferred_channels: tuple[str, ...] = ()):
         self.prefer_recent = prefer_recent or bool(published_after)
         self.published_after = published_after
+        self.preferred_channels = preferred_channels
 
     def resolve(self, url: str) -> Candidate | None:
         source = youtube_url(url)
@@ -146,11 +148,14 @@ class YouTubeProvider:
         entries = _extract(target, flat=True).get("entries") or []
         # Full extraction is bounded; prefer plausible metadata before resolving.
         entries = sorted((e for e in entries[:limit] if isinstance(e, dict)),
-                         key=lambda e: -relevance(query, str(e.get("title", ""))))
+                         key=lambda e: -(relevance(query, str(e.get("title", "")) + " " +
+                                                   str(e.get("channel") or e.get("uploader") or "")) +
+                             0.3 * channel_preference(e.get("channel") or e.get("uploader") or "",
+                                                      e.get("channel_url") or "", self.preferred_channels)))
         candidates = []
         seen = set()
         failures = 0
-        for entry in entries[:4]:
+        for entry in entries:
             try:
                 if entry.get("duration") and not 2 <= float(entry["duration"]) <= 600:
                     continue
@@ -163,6 +168,8 @@ class YouTubeProvider:
                     candidates.append(candidate)
             except (FootageError, ValueError, TypeError):
                 failures += 1  # one deleted/blocked result must not hide others
+            if len(seen) >= 4:
+                break
         if failures:
             print(f"warning: {failures} YouTube result(s) unavailable; check/update the youtube extra if this persists", file=sys.stderr)
         return candidates

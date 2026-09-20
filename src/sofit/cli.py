@@ -128,6 +128,9 @@ def _parser() -> argparse.ArgumentParser:
                    "instead of search (repeat up to eight times)")
     p.add_argument("--footage-after", metavar="YYYY-MM-DD", default="",
                    help="enable web cutaways and require a known upload date on or after this date")
+    p.add_argument("--footage-coverage", type=float, metavar="PERCENT",
+                   help="target moving-footage coverage (0-100); default 85 for audio-only, "
+                   "0 for sparse cutaways over video. Saved manual plans are preserved")
     p.add_argument("--animate", action="store_true",
                    help="with --storyboard: animate each scene via image-to-video "
                    "(fal.ai Kling, needs FAL_KEY; ~$0.25-0.50 per scene). Failed "
@@ -174,7 +177,8 @@ def _render_from(clips_path: str, out_dir: str | None, aspect: str, only: str | 
                  titler: str = "api", animate: bool = False,
                  cutaways: bool = False, web_cutaways: bool = False,
                  web_cutaways_safe_only: bool = False,
-                 footage_urls: tuple[str, ...] = (), footage_after: str = "") -> int:
+                 footage_urls: tuple[str, ...] = (), footage_after: str = "",
+                 footage_coverage: float | None = None) -> int:
     """Render clips from a saved (possibly corrected) clips.json, no transcription.
     Output goes to `out_dir` if given, else the clips.json's own folder."""
     import json
@@ -212,10 +216,32 @@ def _render_from(clips_path: str, out_dir: str | None, aspect: str, only: str | 
             titler = "claude-cli" if shutil.which("claude") else titler
         from . import storyboard as sb
         try:
+            if footage_coverage is None:
+                default_coverage = 85 if render._is_audio_only(Path(video)) else 0
+                for clip in clips:
+                    clip.setdefault("footage_coverage", default_coverage)
+            if any(not c.get("visual_context") for c in clips):
+                from .transcribe import cached_segments
+                from .generate import visual_context
+                # Read the existing transcript only; rendering must never transcribe.
+                try:
+                    context_segments = cached_segments(video)
+                except (OSError, ValueError):
+                    context_segments = None
+                for clip in clips:
+                    if not clip.get("visual_context"):
+                        context = doc.get("visual_context") or (doc.get("source") or {}).get("visual_context")
+                        if not context and context_segments:
+                            spans = clip.get("segments") or [clip]
+                            context = visual_context(context_segments, min(s["start"] for s in spans),
+                                                     max(s["end"] for s in spans))
+                        if context:
+                            clip["visual_context"] = context
             n = sb.add_web_cutaways(doc, clips_path, only=only, style=style,
                                     titler=titler, generated=cutaways, animate=animate,
                                     safe_only=web_cutaways_safe_only,
-                                    source_urls=footage_urls, published_after=footage_after)
+                                    source_urls=footage_urls, published_after=footage_after,
+                                    coverage=footage_coverage)
             print(f"added {n} web/generated cutaway(s); spec updated", file=sys.stderr)
         except (OSError, ValueError) as e:
             print(f"warning: cannot save web cutaways: {e}; continuing render", file=sys.stderr)
@@ -257,6 +283,12 @@ def _render_from(clips_path: str, out_dir: str | None, aspect: str, only: str | 
                                hook_variant=hook_variant, hook_style=hook_style,
                                safe_area=safe_area,
                                cover=cover, cta=cta, music=music)
+    if web_cutaways:
+        from .footage import write_json
+        try:
+            write_json(Path(clips_path), doc)  # final coverage includes composition fallback
+        except OSError as e:
+            print(f"warning: cannot save final footage coverage: {e}", file=sys.stderr)
     print(f"rendered {len(outs)} clip(s) to {out}", file=sys.stderr)
     return 0
 
@@ -302,8 +334,11 @@ def main(argv: list[str] | None = None) -> int:
         return _caption_check(raw[1:])
 
     args = _parser().parse_args(argv)
-    if args.web_cutaways_safe_only or args.footage_url or args.footage_after:
+    if args.web_cutaways_safe_only or args.footage_url or args.footage_after or args.footage_coverage is not None:
         args.web_cutaways = True
+    if args.footage_coverage is not None and not 0 <= args.footage_coverage <= 100:
+        print("error: --footage-coverage must be between 0 and 100", file=sys.stderr)
+        return 1
     if args.footage_url or args.footage_after:
         from .footage import VisualIntent, FootageError
         try:
@@ -339,7 +374,8 @@ def main(argv: list[str] | None = None) -> int:
                             titler=args.titler, animate=args.animate,
                             cutaways=args.cutaways, web_cutaways=args.web_cutaways,
                             web_cutaways_safe_only=args.web_cutaways_safe_only,
-                            footage_urls=tuple(args.footage_url), footage_after=args.footage_after)
+                            footage_urls=tuple(args.footage_url), footage_after=args.footage_after,
+                            footage_coverage=args.footage_coverage)
 
     if args.storyboard:
         print("error: --storyboard renders from a saved spec; run once to get a "

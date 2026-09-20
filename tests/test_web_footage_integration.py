@@ -19,7 +19,7 @@ def run(*args):
     return subprocess.run(args, check=True, capture_output=True, timeout=120).stdout
 
 
-@pytest.mark.parametrize("provider_kind", ["fixture", "youtube", "direct"])
+@pytest.mark.parametrize("provider_kind", ["fixture", "youtube", "direct", "coverage"])
 def test_transcript_to_selected_web_cutaway_and_real_render(monkeypatch, tmp_path, provider_kind):
     Image = pytest.importorskip("PIL.Image")
     original, footage = tmp_path / "episode.mp4", tmp_path / "web.mp4"
@@ -65,9 +65,10 @@ def test_transcript_to_selected_web_cutaway_and_real_render(monkeypatch, tmp_pat
     monkeypatch.setattr(f, "open_url", download)
     def plan(system, user, validate, **kwargs):
         assert "כתוביות" in user
-        return validate({"cutaways": [{"span": 0, "start": 4, "end": 8, "source": "web",
+        beats = [(0, 4), (4, 8), (8, 12)] if provider_kind == "coverage" else [(4, 8)]
+        return validate({"cutaways": [{"span": 0, "start": s, "end": e, "source": "web",
                          "intent": "Unitree robot running", "query": "Unitree robot running",
-                         "context": "A robot demonstration"}]})
+                         "context": "A robot demonstration"} for s, e in beats]})
     monkeypatch.setattr(storyboard, "call_claude_json", plan)
     spec = tmp_path / "episode.clips.json"
     cache = f.FootageCache(tmp_path / "cache")
@@ -89,11 +90,14 @@ def test_transcript_to_selected_web_cutaway_and_real_render(monkeypatch, tmp_pat
         urls = ("https://example.org/123.mp4",)
     assert storyboard.add_web_cutaways(doc, str(spec), providers=providers, cache=cache,
                                        judge=Judge(), safe_only=provider_kind == "fixture",
-                                       source_urls=urls) == 1
+                                       source_urls=urls, coverage=100 if provider_kind == "coverage" else 0
+                                       ) == (3 if provider_kind == "coverage" else 1)
     stored = json.loads(spec.read_text())
     cutaway = stored["clips"][0]["cutaways"][0]
     assert 8 <= cutaway["source"]["selection"]["start"] < cutaway["source"]["selection"]["end"] <= 16
     assert stored["clips"][0]["words"] == clip["words"]
+    if provider_kind == "coverage":
+        assert stored["clips"][0]["footage_coverage_report"]["achieved_percent"] == 100
     # A correction/rerender needs neither network nor the planning/model backend.
     assert storyboard.add_web_cutaways(stored, str(spec), providers=providers, cache=cache,
                                        judge=Judge(), safe_only=provider_kind == "fixture") == 0
@@ -109,7 +113,7 @@ def test_transcript_to_selected_web_cutaway_and_real_render(monkeypatch, tmp_pat
     assert abs(float(probe["format"]["duration"]) - 12) < 0.15
     audio = lambda p: run("ffmpeg", "-v", "error", "-i", str(p), "-map", "0:a:0", "-f", "s16le", "-")
     assert audio(output) == audio(baseline)  # external 880Hz audio never enters the mix
-    for at, green in [(1, False), (6, True), (10, False)]:
+    for at, green in [(1, provider_kind == "coverage"), (6, True), (10, provider_kind == "coverage")]:
         image = Image.open(io.BytesIO(run("ffmpeg", "-v", "error", "-ss", str(at), "-i", str(output),
                                          "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-")))
         r, g, b = image.getpixel((5, 160))

@@ -125,7 +125,13 @@ def _sample(media: Path, times: list[float], directory: Path) -> list[Frame]:
 
 
 def _scores(judge: FrameJudge, frames: list[Frame], intent: VisualIntent):
-    scores = judge.score(frames, intent)
+    scores = []
+    for start in range(0, len(frames), 25):
+        batch = frames[start:start + 25]
+        result = judge.score(batch, intent)
+        if len(result) != len(batch):
+            raise FootageError("missing visual scores")
+        scores.extend(result)
     if len(scores) != len(frames) or any(
             not math.isfinite(s) or not 0 <= s <= 1 or not reason for s, reason in scores):
         raise FootageError("invalid visual scores")
@@ -147,8 +153,10 @@ def select_segment(media: Path, candidate: Candidate, intent: VisualIntent,
         center = coarse[best].at
         start = max(0, min(center - intent.duration, duration - 2 * intent.duration))
         end = min(duration - 1 / 30, start + 2 * intent.duration)
-        # Half-second-ish observations; bounded at 25, even for an 8s insert.
-        count = min(25, max(9, math.ceil((end - start) / 0.5) + 1))
+        # Longer manual shots retain roughly one-second observations rather
+        # than spreading the old 25 samples across a full minute. Batches stay <=25.
+        count = min(25 if intent.duration <= 8 else 61,
+                    max(9, math.ceil((end - start) / 0.5) + 1))
         fine = _sample(media, _linspace(start, end, count), directory)
         scores = _scores(judge, fine, intent)
         choices = []
@@ -198,9 +206,19 @@ def normalize_segment(media: Path, segment: SelectedSegment, output: Path) -> Pa
         temp.unlink(missing_ok=True)
 
 
+def _search(providers: list[FootageProvider], query: str) -> list[Candidate]:
+    candidates = []
+    for provider in providers:
+        try:
+            candidates.extend(provider.search(query, limit=8))
+        except Exception as e:
+            print(f"warning: footage search ({provider.name}): {type(e).__name__}", file=sys.stderr)
+    return candidates
+
+
 def find_footage(intent: VisualIntent, providers: list[FootageProvider] | None = None,
                  cache: FootageCache | None = None, judge: FrameJudge | None = None,
-                 titler: str = "api", safe_only: bool = False) -> dict | None:
+                 titler: str = "api", safe_only: bool = False, discovery_cache: dict | None = None) -> dict | None:
     """Search -> rank -> cached download -> select -> silent asset + provenance.
 
     At most two ranked candidates per beat are visually evaluated. Explicit
@@ -214,21 +232,29 @@ def find_footage(intent: VisualIntent, providers: list[FootageProvider] | None =
         from .footage_youtube import YouTubeProvider, available
         providers = [CommonsProvider()]
         if available():
-            providers.append(YouTubeProvider(intent.prefer_recent, intent.published_after))
+            providers.append(YouTubeProvider(intent.prefer_recent, intent.published_after,
+                                             intent.preferred_channels))
         elif not intent.source_urls:
             print("note: install the youtube extra to search YouTube footage; using Commons", file=sys.stderr)
     judge = judge or ClaudeFrameJudge(titler)
     candidates = []
     if intent.source_urls:
-        from .footage_direct import DirectProvider
-        from .footage_youtube import YouTubeProvider, youtube_url
+        from .footage_youtube import youtube_url
         from dataclasses import replace
         from .footage import canonical_url
-        direct, youtube = DirectProvider(), YouTubeProvider()
-        providers = [direct, youtube]
         urls = tuple(dict.fromkeys(youtube_url(u) or canonical_url(u) for u in intent.source_urls))
         intent = replace(intent, source_urls=urls)
-        for url in urls:
+    discoveries = discovery_cache if discovery_cache is not None else {}
+    discovery_key = (intent.source_urls or intent.query, intent.prefer_recent, intent.published_after,
+                     intent.preferred_channels, safe_only)
+    if discovery_key in discoveries:
+        candidates, providers = discoveries[discovery_key]
+    elif intent.source_urls:
+        from .footage_direct import DirectProvider
+        from .footage_youtube import YouTubeProvider
+        direct, youtube = DirectProvider(), YouTubeProvider()
+        providers = [direct, youtube]
+        for url in intent.source_urls:
             try:
                 if youtube_url(url):
                     from .footage_youtube import available
@@ -245,12 +271,23 @@ def find_footage(intent: VisualIntent, providers: list[FootageProvider] | None =
             except Exception as e:
                 print(f"warning: footage link: {type(e).__name__}", file=sys.stderr)
     else:
-        for provider in providers:
-            try:
-                candidates.extend(provider.search(intent.query, limit=8))
-            except Exception as e:  # provider/plugin boundary; enhancement only
-                print(f"warning: footage search ({provider.name}): {type(e).__name__}", file=sys.stderr)
+        candidates = _search(providers, intent.query)
+    discoveries[discovery_key] = (candidates, providers)
     ranked = rank_candidates(candidates, intent, safe_only, cache.limits)
+    from .footage import channel_preference
+    preferred_found = any(channel_preference(c.creator, c.channel_url, intent.preferred_channels)
+                          for c in ranked)
+    if (intent.required_terms and not intent.source_urls and
+            (not ranked or (intent.preferred_channels and not preferred_found))):
+        # Detailed queries may overconstrain catalog search. Retry once using
+        # the same exact entity/version, never a generic category like 'robot'.
+        anchor = " ".join(dict.fromkeys(" ".join(intent.required_terms).split()))
+        anchor_key = (anchor, intent.prefer_recent, intent.published_after,
+                      intent.preferred_channels, safe_only)
+        if anchor_key not in discoveries:
+            discoveries[anchor_key] = (_search(providers, anchor), providers)
+        ranked = rank_candidates(discoveries[anchor_key][0] + candidates,
+                                 intent, safe_only, cache.limits)
     for candidate in ranked[:2]:
         try:
             media, metadata = cache.retrieve(candidate)
