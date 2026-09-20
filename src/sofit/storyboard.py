@@ -289,6 +289,86 @@ def _scene_video(prompt: str, still: Path, dur: float, out_path: Path) -> Path |
 # Cutaways: 1-2 short generated scenes spliced over the REAL footage
 # ---------------------------------------------------------------------------
 
+def plan_cutaways(clip: dict, titler: str = "api", web: bool = False) -> list[dict]:
+    """One bounded visual plan per clip, using span-relative transcript timings."""
+    spans = clip.get("segments") or [
+        {"start": clip["start"], "end": clip["end"], "words": clip.get("words")}]
+    span_texts = []
+    for i, rng in enumerate(spans):
+        dur = float(rng["end"]) - float(rng["start"])
+        timed = " ".join(f'[{float(w["t"]):.1f}]{w.get("w", "")}'
+                         for w in (rng.get("words") or []))
+        span_texts.append(f"span {i} (0..{dur:.1f}s): {timed}")
+    system = (
+        "You pick CUTAWAY moments for a talking-head podcast clip: short "
+        "generated illustration shots spliced over the footage while the "
+        "audio keeps running. Given the clip's spans with per-word times "
+        "(seconds, relative to each span's own start), return ONLY JSON: "
+        '{"cutaways": [{"span": i, "start": s, "end": s, "prompt": str}, ...]}. '
+        "Rules: at most 2 cutaways TOTAL (0 or 1 is fine - most sentences "
+        "deserve none); ONLY when a CONCRETE visual object, scene, or "
+        "metaphor is being said aloud (a warehouse of goods, a Trojan "
+        "horse, a scar) - never for abstract talk; each 2.5-5.0s, fully "
+        "inside its span, starting when the visual thing is being said; "
+        "never within the first 3s of span 0 (hook card) or the last 2.5s "
+        "of the final span. Prompts are ENGLISH, concrete and visual, and "
+        "never contain text or captions."
+    )
+    if web:
+        system += (
+            " Choose the visual source for each beat: source='web' for authentic "
+            "footage of real people, products, places, events or demonstrations; "
+            "source='generated' for metaphors/imaginary scenes; source='original' "
+            "when the recording is best (or omit the beat). Never invent an event. "
+            "For web beats include intent (English, specific visible subject AND "
+            "action), query (short English search keywords, exact product/event "
+            "if named), context (what is actually said), and prompt (optional "
+            "illustration fallback). Use web ONLY if seeing the real thing adds "
+            "information; do not search for every sentence. Each web beat 3-8s."
+        )
+    user = "\n".join(span_texts)
+
+    def validate(obj):
+        cws = obj.get("cutaways") if isinstance(obj, dict) else None
+        if cws is None or not isinstance(cws, list):
+            raise GenerationError("no cutaways list")
+        out = []
+        for c in cws[:2]:
+            try:
+                s, e = float(c.get("start", 0)), float(c.get("end", 0))
+                i = int(c.get("span", 0))
+            except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+                raise GenerationError("invalid cutaway timing") from exc
+            p = str(c.get("prompt") or "").strip()
+            if (not web and not p) or not (0 <= i < len(spans)):
+                continue
+            dur = float(spans[i]["end"]) - float(spans[i]["start"])
+            s, e = max(0.0, s), min(e, dur)
+            if web:
+                import math
+                source = c.get("source", "original")
+                s = max(s, 3.0 if i == 0 else 0.0)
+                e = min(e, dur - (2.5 if i == len(spans) - 1 else 0.0), s + 8)
+                if source not in {"web", "generated"} or not all(map(math.isfinite, (s, e))):
+                    continue
+                if e - s < 3 or any(o["span"] == i and s < o["end"] and e > o["start"] for o in out):
+                    continue
+                intent, query = str(c.get("intent") or "").strip(), str(c.get("query") or "").strip()
+                if source == "web" and (not intent or not query):
+                    continue
+                if source == "generated" and not p:
+                    continue
+                out.append({"span": i, "start": round(s, 2), "end": round(e, 2),
+                            "source": source, "prompt": p, "intent": intent, "query": query,
+                            "duration": round(e - s, 2), "context": str(c.get("context") or "")})
+            elif e - s >= 2.0:
+                out.append({"span": i, "start": round(s, 2),
+                            "end": round(e, 2), "prompt": p})
+        return out
+
+    return call_claude_json(system, user, validate, titler=titler)
+
+
 def add_cutaways(doc: dict, spec_path: str, only: str | None = None,
                  style: str | None = None, titler: str = "api",
                  animate: bool = False) -> int:
@@ -303,51 +383,8 @@ def add_cutaways(doc: dict, spec_path: str, only: str | None = None,
         cid = str(clip.get("id"))
         if only and cid != only:
             continue
-        spans = clip.get("segments") or [
-            {"start": clip["start"], "end": clip["end"], "words": clip.get("words")}]
-        span_texts = []
-        for i, rng in enumerate(spans):
-            dur = float(rng["end"]) - float(rng["start"])
-            timed = " ".join(f'[{float(w["t"]):.1f}]{w.get("w", "")}'
-                             for w in (rng.get("words") or []))
-            span_texts.append(f"span {i} (0..{dur:.1f}s): {timed}")
-        system = (
-            "You pick CUTAWAY moments for a talking-head podcast clip: short "
-            "generated illustration shots spliced over the footage while the "
-            "audio keeps running. Given the clip's spans with per-word times "
-            "(seconds, relative to each span's own start), return ONLY JSON: "
-            '{"cutaways": [{"span": i, "start": s, "end": s, "prompt": str}, ...]}. '
-            "Rules: at most 2 cutaways TOTAL (0 or 1 is fine - most sentences "
-            "deserve none); ONLY when a CONCRETE visual object, scene, or "
-            "metaphor is being said aloud (a warehouse of goods, a Trojan "
-            "horse, a scar) - never for abstract talk; each 2.5-5.0s, fully "
-            "inside its span, starting when the visual thing is being said; "
-            "never within the first 3s of span 0 (hook card) or the last 2.5s "
-            "of the final span. Prompts are ENGLISH, concrete and visual, and "
-            "never contain text or captions."
-        )
-        user = "\n".join(span_texts)
-
-        def validate(obj):
-            cws = obj.get("cutaways") if isinstance(obj, dict) else None
-            if cws is None or not isinstance(cws, list):
-                raise GenerationError("no cutaways list")
-            out = []
-            for c in cws[:2]:
-                s, e = float(c.get("start", 0)), float(c.get("end", 0))
-                i = int(c.get("span", 0))
-                p = str(c.get("prompt") or "").strip()
-                if not p or not (0 <= i < len(spans)):
-                    continue
-                dur = float(spans[i]["end"]) - float(spans[i]["start"])
-                s, e = max(0.0, s), min(e, dur)
-                if e - s >= 2.0:
-                    out.append({"span": i, "start": round(s, 2),
-                                "end": round(e, 2), "prompt": p})
-            return out
-
         try:
-            cws = call_claude_json(system, user, validate, titler=titler)
+            cws = plan_cutaways(clip, titler=titler)
         except GenerationError as e:
             print(f"warning: cutaway planning failed for {cid}: {e}", file=sys.stderr)
             continue
@@ -377,6 +414,102 @@ def add_cutaways(doc: dict, spec_path: str, only: str | None = None,
         added += len(cws)
     Path(spec_path).write_text(
         json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    return added
+
+
+def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
+                     style: str | None = None, titler: str = "api",
+                     generated: bool = False, animate: bool = False,
+                     safe_only: bool = False, providers=None, cache=None, judge=None) -> int:
+    """Resolve an editable visual_plan into ordinary image/video cutaways.
+
+    Existing editorial cutaways survive. Saved plans and assets are reused;
+    remove a clip's visual_plan and its matching cutaways to plan it again.
+    All enhancement failures retain the recording (or an existing cutaway).
+    """
+    import hashlib
+    from dataclasses import fields
+    from .footage import Candidate, VisualIntent, license_allowed, write_json
+    from .footage_selection import find_footage
+    from .render import _usable_cutaways
+
+    added = 0
+    style = style or os.environ.get("SOFIT_STYLE") or DEFAULT_STYLE
+
+    def permitted(c):
+        if not safe_only or not isinstance(c.get("source"), dict):
+            return True
+        try:
+            candidate = Candidate(**{f.name: c["source"][f.name] for f in fields(Candidate)
+                                     if f.name in c["source"]})
+            return license_allowed(candidate, True)
+        except (TypeError, ValueError, KeyError, AttributeError):
+            return False
+
+    for clip in doc["clips"]:
+        if only and clip.get("id") != only:
+            continue
+        try:
+            existing = [c for c in (clip.get("cutaways") or []) if permitted(c)]
+            if safe_only:
+                clip["cutaways"] = existing
+            if "visual_plan" not in clip:
+                clip["visual_plan"] = plan_cutaways(clip, titler=titler, web=True)
+            for beat in clip["visual_plan"][:2]:
+                if beat.get("source") not in {"web", "generated"}:
+                    continue
+                plan_id = hashlib.sha256(json.dumps(beat, sort_keys=True).encode()).hexdigest()[:24]
+                matches = [c for c in existing if c.get("plan_id") == plan_id]
+                reusable = _usable_cutaways(matches)
+                if reusable:
+                    continue
+                existing = [c for c in existing if c not in matches]
+                span, start, end = int(beat.get("span", 0)), float(beat["start"]), float(beat["end"])
+                spans = clip.get("segments") or [clip]
+                if not 0 <= span < len(spans):
+                    continue
+                dur = float(spans[span]["end"]) - float(spans[span]["start"])
+                if not 0 <= start < end <= dur or not 2 <= end - start <= 8:
+                    continue
+                # An explicit/manual cutaway at this beat takes precedence.
+                if any(int(c.get("span", 0)) == span and start < c["end"] and end > c["start"]
+                       for c in existing):
+                    continue
+                asset = None
+                if beat.get("source") == "web":
+                    intent = VisualIntent(beat["intent"], beat["query"], end - start,
+                                          beat.get("context", ""))
+                    asset = find_footage(intent, providers=providers, cache=cache, judge=judge,
+                                         titler=titler, safe_only=safe_only)
+                if asset is None and generated and beat.get("prompt"):
+                    try:
+                        # Content-based names avoid stale art after a prompt/style edit
+                        # and do not interpolate an untrusted clip id into a path.
+                        key = hashlib.sha256((style + beat["prompt"]).encode()).hexdigest()[:24]
+                        directory = Path(spec_path).resolve().parent / "cutaways" / key
+                        directory.mkdir(parents=True, exist_ok=True)
+                        png = directory / "still.png"
+                        if not png.exists():
+                            _scene_image(beat["prompt"], style, None, png)
+                        asset = {"image": str(png)}
+                        if animate:
+                            mp4 = directory / "animated.mp4"
+                            if not mp4.exists():
+                                _scene_video(beat["prompt"], png, end - start, mp4)
+                            if mp4.exists():
+                                asset["video"] = str(mp4)
+                    except Exception as e:  # optional image provider boundary
+                        print(f"warning: cutaway generation: {type(e).__name__}; keeping recording",
+                              file=sys.stderr)
+                if asset:
+                    existing.append({"span": span, "start": start, "end": end,
+                                     "plan_id": plan_id, **asset})
+                    added += 1
+            clip["cutaways"] = existing
+        except Exception as e:  # a failed plan must never stop another clip's render
+            print(f"warning: web cutaways for {clip.get('id')}: {type(e).__name__}; keeping recording",
+                  file=sys.stderr)
+    write_json(Path(spec_path), doc)
     return added
 
 

@@ -116,6 +116,13 @@ def _parser() -> argparse.ArgumentParser:
                    help="with --render-from: splice 1-2 short AI-illustrated "
                    "scenes over the footage at concrete visual moments "
                    "(needs GEMINI_API_KEY + a Claude backend)")
+    p.add_argument("--web-cutaways", action="store_true",
+                   help="with --render-from: find real footage on Wikimedia Commons "
+                   "for useful visual beats; uses the Claude backend to plan and "
+                   "inspect bounded keyframes, and caches the selected shots")
+    p.add_argument("--web-cutaways-safe-only", action="store_true",
+                   help="enable web cutaways, accepting only public-domain, CC0, "
+                   "or CC BY metadata with no reported restrictions")
     p.add_argument("--animate", action="store_true",
                    help="with --storyboard: animate each scene via image-to-video "
                    "(fal.ai Kling, needs FAL_KEY; ~$0.25-0.50 per scene). Failed "
@@ -160,7 +167,8 @@ def _render_from(clips_path: str, out_dir: str | None, aspect: str, only: str | 
                  storyboard: bool = False, style: str | None = None,
                  char_refs: dict[str, str] | None = None,
                  titler: str = "api", animate: bool = False,
-                 cutaways: bool = False) -> int:
+                 cutaways: bool = False, web_cutaways: bool = False,
+                 web_cutaways_safe_only: bool = False) -> int:
     """Render clips from a saved (possibly corrected) clips.json, no transcription.
     Output goes to `out_dir` if given, else the clips.json's own folder."""
     import json
@@ -193,7 +201,19 @@ def _render_from(clips_path: str, out_dir: str | None, aspect: str, only: str | 
         return 1
 
     out = out_dir or os.path.dirname(os.path.abspath(clips_path)) or "."
-    if cutaways:
+    if web_cutaways:
+        if titler == "api" and not os.environ.get("ANTHROPIC_API_KEY"):
+            titler = "claude-cli" if shutil.which("claude") else titler
+        from . import storyboard as sb
+        try:
+            n = sb.add_web_cutaways(doc, clips_path, only=only, style=style,
+                                    titler=titler, generated=cutaways, animate=animate,
+                                    safe_only=web_cutaways_safe_only)
+            print(f"added {n} web/generated cutaway(s); spec updated", file=sys.stderr)
+        except (OSError, ValueError) as e:
+            print(f"warning: cannot save web cutaways: {e}; continuing render", file=sys.stderr)
+        clips = [c for c in doc["clips"] if not only or c.get("id") == only]
+    elif cutaways:
         if titler == "api" and not os.environ.get("ANTHROPIC_API_KEY"):
             titler = "claude-cli" if shutil.which("claude") else titler
         if titler == "api" and not os.environ.get("ANTHROPIC_API_KEY"):
@@ -275,6 +295,12 @@ def main(argv: list[str] | None = None) -> int:
         return _caption_check(raw[1:])
 
     args = _parser().parse_args(argv)
+    if args.web_cutaways_safe_only:
+        args.web_cutaways = True
+    if args.web_cutaways and (not args.render_from or args.storyboard):
+        print("error: web cutaways use the recording: pass --render-from clips.json "
+              "without --storyboard (create the spec with --clips-json first)", file=sys.stderr)
+        return 1
 
     # One env var is the single override channel: every call_claude_json call
     # site (chapters, notes, quotes, clips, storyboard, cutaways) resolves it.
@@ -296,7 +322,8 @@ def main(argv: list[str] | None = None) -> int:
                             storyboard=args.storyboard, style=args.style,
                             char_refs=_parse_char_refs(args.char_ref),
                             titler=args.titler, animate=args.animate,
-                            cutaways=args.cutaways)
+                            cutaways=args.cutaways, web_cutaways=args.web_cutaways,
+                            web_cutaways_safe_only=args.web_cutaways_safe_only)
 
     if args.storyboard:
         print("error: --storyboard renders from a saved spec; run once to get a "
