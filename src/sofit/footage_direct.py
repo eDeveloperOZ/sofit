@@ -8,11 +8,11 @@ from .footage import Candidate, Cue, FootageCache, canonical_url
 class DirectProvider:
     name = "direct"
 
-    def resolve(self, url: str, cache: FootageCache) -> Candidate:
+    def resolve(self, url: str, cache: FootageCache, *, cancelled=None) -> Candidate:
         url = canonical_url(url)
         title = unquote(urlsplit(url).path.rsplit("/", 1)[-1]) or "Direct video"
         provisional = Candidate(self.name, url, url, title, 0, 0, 0, original_media_url=url)
-        _, metadata = cache.retrieve(provisional)
+        _, metadata = cache.retrieve(provisional, **({"cancelled": cancelled} if cancelled else {}))
         info = metadata["video"]
         return replace(provisional, duration=info["duration"], width=info["width"],
                        height=info["height"], size=metadata["size"])

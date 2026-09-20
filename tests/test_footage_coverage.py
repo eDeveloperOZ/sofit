@@ -60,6 +60,16 @@ def test_clip_spec_retains_topic_introduction_outside_kept_words():
     assert clip["words"] == [{"t": 0, "d": 1, "w": "56"}]
 
 
+def test_coverage_does_not_report_floating_point_zero_length_gaps(tmp_path):
+    asset = tmp_path / "asset.mp4"
+    asset.write_bytes(b"video")
+    clip = {"start": 0, "end": 10.02, "cutaways": [
+        {"video": str(asset), "start": 0, "end": 5},
+        {"video": str(asset), "start": 5 + 1e-12, "end": 10.02 - 1e-12},
+    ]}
+    assert sb.footage_coverage(clip, 90)["gaps"] == []
+
+
 def test_manual_many_beats_and_thirty_second_shot_are_not_truncated(
     monkeypatch, tmp_path
 ):

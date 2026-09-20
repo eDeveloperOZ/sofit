@@ -25,6 +25,7 @@ class Progress:
         self.last_output = 0.0
         self.state = {}
         self.sources = Counter()
+        self.running = Counter()
 
     def snapshot(self):
         with self.lock:
@@ -32,11 +33,14 @@ class Progress:
                 "elapsed_seconds": round(time.monotonic() - self.started, 3),
                 "counts": dict(self.counts),
                 "seconds": {k: round(v, 3) for k, v in self.seconds.items()},
+                "active_stages": {k: v for k, v in self.running.items() if v},
                 **self.state,
             }
 
     def event(self, stage, **state):
         with self.lock:
+            for key in ("reason", "message", "source", "clip_seconds", "coverage"):
+                self.state.pop(key, None)
             self.state.update(state, stage=stage)
             data = self.snapshot()
             if self.path:
@@ -57,11 +61,11 @@ class Progress:
             ):
                 c = self.counts
                 print(
-                    f"sofit: {stage} | clips {c['clips_done']}/{self.state.get('clips_total', '?')} "
+                    f"sofit: {','.join(data['active_stages']) or stage} | clips {c['clips_done']}/{self.state.get('clips_total', '?')} "
                     f"| sources {c['sources_done']}/{self.state.get('sources_total', '?')} "
                     f"| beats {c['beats_done']}/{self.state.get('beats_total', '?')} "
                     f"| downloaded {c['downloads_done']} | rendered {c['rendered']} | cache {c['cache_hit']} "
-                    f"| Claude {c['claude_calls']} | elapsed {data['elapsed_seconds']:.0f}s",
+                    f"| models {c['model_calls']} (Claude {c['claude_calls']}, Codex {c['codex_calls']}) | elapsed {data['elapsed_seconds']:.0f}s",
                     file=self.stream,
                     flush=True,
                 )
@@ -115,6 +119,10 @@ def event(stage, **state):
 def stage(name):
     start = time.monotonic()
     count(name + "_calls")
+    p = current()
+    if p:
+        with p.lock:
+            p.running[name] += 1
     event(name)
     try:
         yield
@@ -123,6 +131,7 @@ def stage(name):
         if p:
             with p.lock:
                 p.seconds[name] += time.monotonic() - start
+                p.running[name] -= 1
             p.event(name + "_done")
 
 

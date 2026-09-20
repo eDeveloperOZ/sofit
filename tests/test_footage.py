@@ -193,3 +193,48 @@ def test_atomic_spec_failure_preserves_previous(tmp_path):
         f.write_json(path, {"bad": float("nan")})
     assert json.loads(path.read_text()) == {"previous": True}
     assert not list(tmp_path.glob("*.part"))
+
+
+def test_youtube_range_download_reassembles_exact_bytes(tmp_path, monkeypatch):
+    payload = b'a' * (1024 * 1024 + 17)
+    requests = []
+    candidate = f.Candidate('youtube', 'https://www.youtube.com/watch?v=abcdefghijk',
+                            'https://r1.googlevideo.com/video', 'robot', 10, 320, 240)
+
+    def download(url, timeout, byte_range):
+        start, end = byte_range
+        requests.append(byte_range)
+        stop = min(end, len(payload) - 1)
+        response = Response(payload[start:stop + 1])
+        response.status = 206
+        response.headers = {'Content-Range': f'bytes {start}-{stop}/{len(payload)}',
+                            'Content-Length': str(stop - start + 1)}
+        return response
+
+    monkeypatch.setattr(f, 'open_url', download)
+    monkeypatch.setattr(f, 'probe_video', lambda *a: f.VideoInfo(10, 320, 240))
+    media, metadata = f.FootageCache(tmp_path).retrieve(candidate)
+    assert media.read_bytes() == payload
+    assert requests == [(0, 1048575), (1048576, 1048592)]
+    assert metadata['size'] == len(payload)
+    assert not list(tmp_path.rglob('*.part'))
+
+
+@pytest.mark.parametrize('content_range,body,length', [
+    ('bytes 1-3/4', b'abc', '3'),
+    ('bytes 0-3/4', b'ab', '4'),
+    ('bytes 0-3/4', b'abcd', '3'),
+    ('bytes 0-3/*', b'abcd', '4'),
+    ('bytes 0-3/99999999999', b'abcd', '4'),
+])
+def test_invalid_youtube_ranges_never_publish(tmp_path, monkeypatch, content_range, body, length):
+    candidate = f.Candidate('youtube', 'https://www.youtube.com/watch?v=abcdefghijk',
+                            'https://r1.googlevideo.com/video', 'robot', 10, 320, 240)
+    response = Response(body)
+    response.status = 206
+    response.headers = {'Content-Range': content_range, 'Content-Length': length}
+    monkeypatch.setattr(f, 'open_url', lambda *a: response)
+    with pytest.raises(f.FootageError):
+        f.FootageCache(tmp_path).retrieve(candidate)
+    assert not list(tmp_path.rglob('source.media'))
+    assert not list(tmp_path.rglob('*.part'))

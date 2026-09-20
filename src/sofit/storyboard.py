@@ -503,11 +503,11 @@ def footage_coverage(clip: dict, target: float) -> dict:
             start, end = max(0, float(c["start"])), min(duration, float(c["end"]))
             if end <= start or end <= cursor:
                 continue
-            if start > cursor:
+            if start > cursor + 1e-6:
                 gaps.append({"span": i, "start": round(cursor, 3), "end": round(start, 3)})
             covered += end - max(cursor, start)
             cursor = end
-        if cursor < duration:
+        if cursor < duration - 1e-6:
             gaps.append({"span": i, "start": round(cursor, 3), "end": round(duration, 3)})
     return {"requested_percent": target, "achieved_percent": round(100 * covered / total, 1) if total else 0,
             "video_seconds": round(covered, 3), "timeline_seconds": round(total, 3), "gaps": gaps}
@@ -530,7 +530,7 @@ def prepare_web_session(doc, session, only=None, coverage=None, titler="api",
     from .footage import VisualIntent
     from .footage_progress import event, stage
     intents = []
-    for clip in doc["clips"]:
+    for clip_index, clip in enumerate(doc["clips"]):
         if only and clip.get("id") != only:
             continue
         if "visual_plan" not in clip:
@@ -560,7 +560,7 @@ def prepare_web_session(doc, session, only=None, coverage=None, titler="api",
                 plan_id = hashlib.sha256(json.dumps(beat, sort_keys=True).encode()).hexdigest()[:24]
                 matched = [c for c in clip.get("cutaways", []) if c.get("plan_id") == plan_id]
                 if not safe_only and _beat_complete(beat, matched):
-                    session.reserve_existing(matched)
+                    session.reserve_existing(matched, scope=clip_index)
                     continue
                 if any(not c.get("plan_id") and int(c.get("span", 0)) == span
                        and start < c["end"] and end > c["start"] for c in clip.get("cutaways", [])):
@@ -611,9 +611,12 @@ def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
 
     if session:
         prepare_web_session(doc, session, only, coverage, titler, source_urls, published_after, safe_only)
-    for clip in doc["clips"]:
+    for clip_index, clip in enumerate(doc["clips"]):
         if only and clip.get("id") != only:
             continue
+        if session:
+            session.begin_clip(clip_index)
+        event("clip_selection", clip=str(clip.get("id")))
         try:
             target = float(coverage if coverage is not None else clip.get("footage_coverage", 0))
             if not 0 <= target <= 100:

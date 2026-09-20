@@ -19,6 +19,30 @@ def run(*args):
     return subprocess.run(args, check=True, capture_output=True, timeout=120).stdout
 
 
+def test_adjacent_fractional_cutaways_never_flash_base(tmp_path):
+    """Inspect every output frame, including off-grid boundaries and return to base."""
+    footage = tmp_path / "red.mp4"
+    run("ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+        "color=red:s=32x32:r=30:d=3", "-c:v", "libx264", "-y", str(footage))
+    command = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+               "color=blue:s=32x32:r=30:d=4"]
+    filters = []
+    last, _ = render._append_cutaways(command, filters, "0:v", 1, [
+        {"video": str(footage), "start": 0.53, "end": 2.12},
+        {"video": str(footage), "start": 2.12, "end": 3.12},
+    ], 32, 32)
+    pixels = run(*command, "-filter_complex", ";".join(filters), "-map", f"[{last}]",
+                 "-pix_fmt", "rgb24", "-f", "rawvideo", "-")
+    frames = [pixels[n:n + 32 * 32 * 3] for n in range(0, len(pixels), 32 * 32 * 3)]
+    assert len(frames) == 120
+    for index, frame in enumerate(frames):
+        r, _, b = frame[:3]
+        if 0.53 <= index / 30 <= 3.12:
+            assert r > b + 100, f"base flashed at frame {index}"
+        else:
+            assert b > r + 100, f"cutaway leaked at frame {index}"
+
+
 @pytest.mark.parametrize("provider_kind", ["fixture", "youtube", "direct", "coverage"])
 def test_transcript_to_selected_web_cutaway_and_real_render(monkeypatch, tmp_path, provider_kind):
     Image = pytest.importorskip("PIL.Image")
@@ -56,11 +80,19 @@ def test_transcript_to_selected_web_cutaway_and_real_render(monkeypatch, tmp_pat
                 scores.append((0.99 if g > r + 50 else 0.1, "visible green action"))
             return scores
     downloads = []
-    def download(url, timeout=30):
+    def download(url, timeout=30, byte_range=None):
         downloads.append(url)
         data = footage.read_bytes()
-        response = io.BytesIO(data)
-        response.headers = {"Content-Length": str(len(data))}
+        if byte_range:
+            start, end = byte_range
+            end = min(end, len(data) - 1)
+            response = io.BytesIO(data[start:end + 1])
+            response.status = 206
+            response.headers = {"Content-Length": str(end - start + 1),
+                                "Content-Range": f"bytes {start}-{end}/{len(data)}"}
+        else:
+            response = io.BytesIO(data)
+            response.headers = {"Content-Length": str(len(data))}
         return response
     monkeypatch.setattr(f, "open_url", download)
     def plan(system, user, validate, **kwargs):

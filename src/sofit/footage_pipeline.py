@@ -63,6 +63,13 @@ class JudgeGate:
 
         return self.call(score)
 
+    def score_source(self, frames, intents, candidate):
+        if hasattr(self.judge, "score_source"):
+            return self.call(
+                lambda: self.judge.score_source(frames, intents, candidate)
+            )
+        return self.score_many(frames, intents)
+
     def call(self, fn):
         with self.semaphore:
             if self.blocked:
@@ -88,7 +95,11 @@ class JudgeGate:
                     )
                 ):
                     self.blocked = "quota/authentication/rate limit"
-                    progress.event("visual_service_unavailable", reason=self.blocked)
+                    progress.event(
+                        "visual_service_unavailable",
+                        reason=self.blocked,
+                        visual_service="blocked",
+                    )
                     print(
                         "warning: visual service quota/authentication/rate limit; "
                         "no more model calls this run; retaining original visuals",
@@ -124,6 +135,7 @@ class FootageSession:
         self.jobs, self.intents, self.source_intents, self.used = {}, {}, {}, {}
         self.catalog = {}
         self.reserved_urls = {}
+        self.clip_scope = None
         self.source_locks = {}
         self.completed_sources = set()
         self.disk_budget = int(
@@ -159,16 +171,20 @@ class FootageSession:
             self._lease.__exit__(*exc)
         prune(self.cache.root, max_bytes=self.disk_budget)
 
-    def reserve_existing(self, cutaways):
+    def begin_clip(self, scope):
+        """Avoid repeated shots within a clip; independent clips can reuse them."""
+        self.clip_scope = scope
+
+    def reserve_existing(self, cutaways, scope=None):
         for cutaway in cutaways:
             source = cutaway.get("source") or {}
             selection = source.get("selection") or {}
             try:
                 start, end = float(selection["start"]), float(selection["end"])
                 if 0 <= start < end:
-                    self.reserved_urls.setdefault(source["source_url"], []).append(
-                        (start, end)
-                    )
+                    self.reserved_urls.setdefault(
+                        (scope, source["source_url"]), []
+                    ).append((start, end))
             except (KeyError, TypeError, ValueError):
                 continue
 
@@ -252,7 +268,11 @@ class FootageSession:
                             )
                         self.disk_reserved += reserve
                     try:
-                        candidate = DirectProvider().resolve(url, self.cache)
+                        candidate = DirectProvider().resolve(
+                            url,
+                            self.cache,
+                            cancelled=lambda: self.judge.blocked is not None,
+                        )
                     finally:
                         with self.lock:
                             self.disk_reserved -= reserve
@@ -391,19 +411,24 @@ class FootageSession:
                     self.disk_reserved += reserve
                 try:
                     try:
-                        result = self.cache.retrieve(candidate)
+                        result = self.cache.retrieve(
+                            candidate, cancelled=lambda: self.judge.blocked is not None
+                        )
                     except Exception:
                         # A corrupt/deleted cached file may leave an expired signed
                         # URL in its manifest. Refresh once, never retry every beat.
                         if (
-                            candidate.provider != "youtube"
+                            self.judge.blocked
+                            or candidate.provider != "youtube"
                             or candidate.source_url not in self.catalog
                         ):
                             raise
                         refreshed = YouTubeProvider().resolve(candidate.source_url)
                         if not refreshed:
                             raise FootageError("cached YouTube source is unavailable")
-                        result = self.cache.retrieve(refreshed)
+                        result = self.cache.retrieve(
+                            refreshed, cancelled=lambda: self.judge.blocked is not None
+                        )
                     with self.lock:
                         if not hit:
                             self.disk_reserved += result[1]["size"] - reserve
@@ -497,7 +522,12 @@ class FootageSession:
                 identity = metadata["sha256"]
                 with self.lock:
                     used = self.used.setdefault(
-                        identity, list(self.reserved_urls.get(candidate.source_url, []))
+                        (self.clip_scope, identity),
+                        list(
+                            self.reserved_urls.get(
+                                (self.clip_scope, candidate.source_url), []
+                            )
+                        ),
                     )
                     choices = unused_ranges(indexed[semantic_key(intent)], used)
                     reservations = []

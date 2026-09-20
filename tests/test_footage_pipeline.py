@@ -200,6 +200,29 @@ def test_distinct_actions_batch_but_do_not_share_semantic_scores(tmp_path, monke
     assert max(frames for frames, actions in judge.calls) <= 25
 
 
+def test_independent_clips_reuse_ranges_but_reserve_existing_shots(
+    tmp_path, monkeypatch
+):
+    candidate, resolves, downloads = setup_source(monkeypatch, tmp_path)
+    intent = f.VisualIntent(
+        "running", "Unitree robot", 4, source_urls=(candidate.source_url,)
+    )
+    judge = GreenJudge()
+    with pipeline.FootageSession(f.FootageCache(tmp_path / "cache"), judge) as session:
+        session.begin_clip(0)
+        first = session.find(intent)
+        second = session.find(intent)
+        assert first != second  # no repeated excerpt within one clip
+        calls = len(judge.calls)
+        session.begin_clip(1)
+        assert session.find(intent) == first
+        session.reserve_existing(first["parts"], scope=2)
+        session.begin_clip(2)
+        assert session.find(intent) == second
+        assert len(judge.calls) == calls
+    assert len(downloads) == len(resolves) == 1
+
+
 def test_quota_failure_stops_launches_and_is_not_persisted_as_negative_evidence(
     tmp_path, monkeypatch
 ):
@@ -503,6 +526,11 @@ def test_cli_streaming_progress_and_cache_commands(tmp_path, monkeypatch, capsys
         if line.startswith("{")
     ]
     assert any(row["stage"] == "rendered" for row in rows) and order == ["one"]
+    selecting = next(
+        i for i, row in enumerate(rows) if row["stage"] == "clip_selection"
+    )
+    selected = next(i for i, row in enumerate(rows) if row["stage"] == "beat_selected")
+    assert selecting < selected and rows[selecting]["clip"] == "one"
     saved = json.loads(spec.read_text())
     assert saved["clips"][0]["cutaways"]
     assert cli.main(["cache", "status"]) == 0
@@ -652,3 +680,43 @@ def test_cache_under_aliased_parent_is_managed(tmp_path):
     assert lifecycle.status(root)["files"] == 2
     assert lifecycle.prune(root, dry_run=True, clean=True)["removed_files"] == 2
     assert (directory / "source.media").exists()
+
+
+def test_cancelled_download_cleans_partial_file(tmp_path, monkeypatch):
+    candidate = f.Candidate(
+        "fixture",
+        "https://example.org/v",
+        "https://example.org/v.mp4",
+        "robot",
+        10,
+        320,
+        240,
+    )
+    response = io.BytesIO(b"source bytes")
+    response.headers = {}
+    monkeypatch.setattr(f, "open_url", lambda *args: response)
+    checks = []
+
+    def cancelled():
+        checks.append(True)
+        return len(checks) > 2  # cancellation arrives after opening the response
+
+    reporter = progress.Progress()
+    with reporter.active(), pytest.raises(f.FootageError, match="cancelled"):
+        f.FootageCache(tmp_path).retrieve(candidate, cancelled=cancelled)
+    assert not list(tmp_path.rglob("*.part"))
+    assert not list(tmp_path.rglob("source.media"))
+    assert reporter.counts["downloads_cancelled"] == 1
+    assert response.closed
+
+
+def test_progress_tracks_overlapping_stages_without_stale_errors():
+    reporter = progress.Progress()
+    with reporter.active(), progress.stage("source"):
+        progress.event("source_rejected", reason="wrong subject", source="source-id")
+        with progress.stage("render"):
+            snapshot = reporter.snapshot()
+            assert snapshot["active_stages"] == {"source": 1, "render": 1}
+            assert "reason" not in snapshot and "source" not in snapshot
+        assert reporter.snapshot()["active_stages"] == {"source": 1}
+    assert reporter.snapshot()["active_stages"] == {}

@@ -190,12 +190,14 @@ class _PublicRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, _public_url(newurl))
 
 
-def open_url(url: str, timeout: float = 30):
+def open_url(url: str, timeout: float = 30, byte_range: tuple[int, int] | None = None):
     """Validate initial and redirected destinations; never accept local/file URLs."""
     req = urllib.request.Request(_public_url(url), headers={
         "User-Agent": "Sofit/0.7 (https://github.com/navotvolkgroundup/sofit)",
         "Accept-Encoding": "identity",
     })
+    if byte_range is not None:
+        req.add_header("Range", f"bytes={byte_range[0]}-{byte_range[1]}")
     # Direct HTTPS preserves the validated destination. Environment proxies
     # could resolve/connect elsewhere; this downloader intentionally ignores them.
     return urllib.request.build_opener(urllib.request.ProxyHandler({}), _PublicRedirect(),
@@ -372,12 +374,71 @@ def write_json(path: Path, data: dict) -> None:
         Path(name).unlink(missing_ok=True)
 
 
+def _download_into(url, output, limits, provider, cancelled=None):
+    """Bounded HTTP ranges avoid throttled whole-file YouTube transfers.
+
+    Partial responses must match the exact requested byte interval and stable
+    total length. Other providers keep the ordinary single-response path.
+    """
+    from .footage_progress import count
+    ranged = provider == "youtube" and (urllib.parse.urlsplit(url).hostname or "").endswith(".googlevideo.com")
+    deadline = time.monotonic() + limits.download_seconds
+    size, total = 0, None
+    while True:
+        if cancelled and cancelled():
+            count("downloads_cancelled")
+            raise FootageError("footage acquisition cancelled: visual service unavailable")
+        if time.monotonic() > deadline:
+            raise FootageError("footage download exceeded size/time limit")
+        end = min(size + 1024 * 1024 - 1, (total or limits.max_bytes) - 1)
+        count("download_requests")
+        response = (open_url(url, limits.timeout, (size, end)) if ranged
+                    else open_url(url, limits.timeout))
+        with response:
+            status = getattr(response, "status", 200)
+            length = response.headers.get("Content-Length")
+            expected = int(length) if length is not None else None
+            if expected is not None and not 0 < expected <= limits.max_bytes:
+                raise FootageError("source exceeds file size limit")
+            if status == 206 and ranged:
+                match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", response.headers.get("Content-Range", ""))
+                if not match:
+                    raise FootageError("missing or invalid footage byte range")
+                start, stop, announced = map(int, match.groups())
+                if not (start == size and start <= stop <= end
+                        and stop < announced <= limits.max_bytes
+                        and (total is None or total == announced)):
+                    raise FootageError("unexpected footage byte range")
+                total = announced
+                if expected is not None and expected != stop - start + 1:
+                    raise FootageError("inconsistent footage range length")
+                expected = stop - start + 1
+            elif status != 200 or size:
+                raise FootageError("unexpected partial footage response")
+            offset = size
+            for chunk in iter(lambda: response.read1(64 * 1024), b""):
+                size += len(chunk)
+                count("bytes_downloaded", len(chunk))
+                if cancelled and cancelled():
+                    count("downloads_cancelled")
+                    raise FootageError("footage acquisition cancelled: visual service unavailable")
+                if size > limits.max_bytes or time.monotonic() > deadline:
+                    raise FootageError("footage download exceeded size/time limit")
+                if expected is not None and size - offset > expected:
+                    raise FootageError("footage response exceeds declared length")
+                output.write(chunk)
+            if expected is not None and size - offset != expected:
+                raise FootageError("partial footage download")
+            if status == 200 or size == total:
+                return size
+
+
 class FootageCache:
     def __init__(self, root: Path | None = None, limits: Limits = Limits()):
         self.root = Path(root) if root is not None else cache_dir()
         self.limits = limits
 
-    def retrieve(self, candidate: Candidate) -> tuple[Path, dict]:
+    def retrieve(self, candidate: Candidate, *, cancelled=None) -> tuple[Path, dict]:
         from .footage_progress import count, stage
         url = canonical_url(candidate.media_url)
         identity = canonical_url(candidate.cache_url or url)
@@ -399,28 +460,15 @@ class FootageCache:
             raise FootageError("source exceeds duration limit")
         if candidate.size is not None and candidate.size > self.limits.max_bytes:
             raise FootageError("source exceeds file size limit")
+        if cancelled and cancelled():
+            raise FootageError("footage acquisition cancelled: visual service unavailable")
         count("cache_miss")
         fd, temp_name = tempfile.mkstemp(dir=directory, suffix=".part")
         temp = Path(temp_name)
         try:
             with stage("download"):
-                deadline = time.monotonic() + self.limits.download_seconds
-                with os.fdopen(fd, "wb") as f, open_url(url, self.limits.timeout) as response:
-                    if getattr(response, "status", 200) != 200:
-                        raise FootageError("unexpected partial footage response")
-                    expected = response.headers.get("Content-Length")
-                    expected = int(expected) if expected is not None else None
-                    if expected is not None and not 0 < expected <= self.limits.max_bytes:
-                        raise FootageError("source exceeds file size limit")
-                    size = 0
-                    for chunk in iter(lambda: response.read1(64 * 1024), b""):
-                        size += len(chunk)
-                        count("bytes_downloaded", len(chunk))
-                        if size > self.limits.max_bytes or time.monotonic() > deadline:
-                            raise FootageError("footage download exceeded size/time limit")
-                        f.write(chunk)
-                    if expected is not None and size != expected:
-                        raise FootageError("partial footage download")
+                with os.fdopen(fd, "wb") as output:
+                    size = _download_into(url, output, self.limits, candidate.provider, cancelled)
                 info = probe_video(temp, self.limits)
                 saved = {"url": url, "identity": identity, "size": size, "sha256": _hash(temp),
                          "retrieved_at": datetime.now(timezone.utc).isoformat(),

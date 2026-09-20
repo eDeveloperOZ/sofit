@@ -1802,9 +1802,11 @@ def _append_cutaways(cmd: list[str], filters: list[str], last: str, idx: int,
                 f"[{idx}:v]zoompan=z='{z}':x='(iw-iw/zoom)/2'"
                 f":y='(ih-ih/zoom)/2':d=1:s={tw}x{th}:fps=30,"
                 f"trim=duration={d},setpts=PTS-STARTPTS+{t0}/TB[cw{k}]")
+        # Fractional beat boundaries need the last frame held until the enable
+        # window ends; passing through at EOF exposes the base for one frame.
         filters.append(
             f"[{last}][cw{k}]overlay=0:0:enable="
-            f"'between(t,{t0},{t1})':eof_action=pass[ov{k}]")
+            f"'between(t,{t0},{t1})':eof_action=repeat[ov{k}]")
         last, idx = f"ov{k}", idx + 1
     return last, idx
 
