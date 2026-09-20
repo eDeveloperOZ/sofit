@@ -128,9 +128,13 @@ and cache in `<spec dir>/cutaways/`, so corrected re-renders keep them.
 
 Keep the recording and show authentic footage where seeing the real thing adds
 information: a product demonstration, a robot in motion, a place or an event.
-The planner chooses at most two visual beats per clip. YouTube and Wikimedia Commons search,
-metadata ranking and bounded visual inspection locate a relevant 3–8 second
-excerpt; the existing cutaway renderer keeps the podcast audio and captions.
+YouTube and Wikimedia Commons search, subject/version matching and bounded visual
+inspection locate relevant footage; the existing renderer keeps podcast audio
+and captions. Audio-only input defaults to an **85% moving-footage target** instead
+of a mostly static cover. Recording-based clips keep the sparse two-beat default.
+Set `--footage-coverage 90` for dense coverage of either input, or `0` for sparse
+planning. Manual plans can contain up to 64 beats, each **2–30 seconds**, with no
+silent two-beat truncation. Short varied shots are usually better than long ones.
 
 ```bash
 pip install 'sofit-cli[render,youtube]'
@@ -138,6 +142,9 @@ pip install 'sofit-cli[render,youtube]'
 sofit episode.mp4 --clips-json episode.clips.json --titler claude-cli
 sofit --render-from episode.clips.json --render-clips out \
       --web-cutaways --titler claude-cli
+# Cover most of an audio episode with relevant source footage.
+sofit --render-from episode.clips.json --render-clips out \
+      --web-cutaways --footage-coverage 90 --titler claude-cli
 # Conservative rights-metadata allowlist; this flag also enables web cutaways.
 sofit --render-from episode.clips.json --render-clips out \
       --web-cutaways-safe-only --titler claude-cli
@@ -187,6 +194,23 @@ and silent H.264 excerpts live under `$XDG_CACHE_HOME/sofit/footage` (default
 the assets without searching or calling a model. Remove a clip's `visual_plan`
 and its associated cutaways to replan. Missing assets fall back to the recording;
 run with `--web-cutaways` again to retrieve/resolve them.
+
+Planning uses `visual_context` around the clip, not only its isolated words.
+New specs retain nearby transcript context; existing specs read the cached
+transcript when available (never re-transcribing). Agents can supply verified
+topic context, `required_terms` (company/product/version) and `preferred_channels`
+(publisher name/handle) per beat. A discussion of Figure Helix 2.5 needs that
+release, not generic robot footage. If a detailed query finds no eligible source,
+search retries with the same exact subject/version. Publisher preference is a
+ranking signal, not proof of official ownership; use researched `source_urls`
+to pin a verified source. Repeated discovery is reused within a render run.
+
+Coverage is a target, not permission to insert unrelated footage. The CLI reports
+achieved coverage and gaps in `footage_coverage_report`; each rendered clip also
+gets a `.coverage.json` reflecting actual composition, including fallback. An
+unmet target emits a warning. Saved plans are preserved: to replace an old sparse
+plan, edit it or remove `visual_plan` to replan. Obsolete automatic assets are
+replaced; manually supplied cutaways without `plan_id` retain precedence.
 
 Add `--cutaways` to allow the existing generated-image fallback (needs
 `GEMINI_API_KEY`); add `--animate` for that fallback's optional animation.

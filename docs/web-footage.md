@@ -12,7 +12,8 @@ clip words → one visual plan → provider search → metadata/rights ranking
 ## Contracts
 
 - `footage.VisualIntent`: English intent/query, desired duration, spoken context,
-  optional explicit source URLs, upload-date cutoff and recent-upload preference.
+  optional explicit source URLs, upload-date cutoff, recent-upload preference,
+  required subject/version terms and preferred publisher names/handles.
 - `footage.FootageProvider`: `name`, `search(query, limit)` and
   `subtitles(candidate)`. An implementation without timed text returns `[]`.
 - `footage.Candidate`: provider-independent source/media URLs, dimensions,
@@ -42,8 +43,12 @@ existing cutaways. The source excerpt's times are separate, in
 ```
 
 A saved plan can also be authored directly through the CLI's clips JSON interface.
-The planner omits beats best served by the original recording, reserves the hook
-and closing seconds, rejects overlaps and caps plans at two beats. Editorial
+Sparse planning omits beats best served by the recording and reserves the hook
+and closing seconds. Audio-only CLI inputs default to 85% coverage; an explicit
+`--footage-coverage 0..100` overrides the target. Dense planning can cover the
+opening/closing too (titles/captions are composed above it), with a duration-based
+beat budget up to 64. Manual plans also accept up to 64 beats and 2–30s windows.
+Plans reject overlaps and out-of-span times. Editorial
 cutaways already occupying a beat take precedence. `source: "generated"` beats
 are rendered only when the generated fallback is explicitly enabled.
 
@@ -81,11 +86,24 @@ At most eight explicit links are accepted. Direct-file metadata probing download
 each candidate under the same per-file bounds; only two ranked candidates reach
 visual inspection. Prefer a short list when the source files are large.
 
-Catalog search is strict: the planner keeps queries concise (usually 2–4 words),
-preserving named subjects while keeping visual details in `intent`. For example,
-use `rocket launch` to search and describe the engine flame in the intent. Saved
-plans are editable when a search is too specific; an empty result keeps the
-original footage.
+Planning receives clip words, its hook and `visual_context`: up to 180s before
+and 30s after the clip from the existing transcript, capped at 16,000 characters.
+This preserves topic introductions lost in short edits. New clip specs include
+it; the CLI recovers it from the transcript cache for old specs when possible.
+User-supplied clip/document context takes precedence. No render triggers transcription.
+
+Queries preserve company/product/version, event and demonstration, rather than
+reducing to generic categories. `required_terms` gate publisher metadata before
+download (all subject words, intact decimal versions). A title's omitted company
+may be supplied by its channel name. `preferred_channels` boosts exact publisher
+name/handle matches before and after full metadata extraction; a video's title
+saying 'official' is not proof. If no eligible result or no preferred publisher
+is found, a single retry searches
+the required subject/version without action adjectives. It never relaxes identity.
+Explicit bare-file links have no subject metadata, so rely on their editorial
+selection and the same visual evidence gate. Verified `source_urls` remain the
+strongest way to pin research-backed sources. Search/link discovery is cached
+within a run, including repeated publisher queries across beats.
 
 Ranking uses English token overlap across title, description/tags and supplied
 cues; dimensions and duration only break relevant ties. Rights filtering happens
@@ -94,12 +112,13 @@ beat proceed to download and visual inspection.
 
 Up to three matching subtitle windows produce at most 12 coarse frames. Without
 matching subtitles, 12 evenly spaced frames cover the source. The strongest
-visible match gets a second batch of at most 25 frames over twice the requested
-excerpt duration. A window must have at least three observations, all scoring
+visible match gets fine review over twice the requested excerpt duration: up to
+25 frames for shots <=8s, up to 61 for longer shots (roughly one-second spacing
+even at 30s). Each model batch is limited to 25 images. A window must have at least three observations, all scoring
 at least 0.75, including end-boundary evidence. Low-scoring samples cannot be
 bridged. Exact boundaries stay inside the actual probed source duration.
 
-This costs at most two visual batches per candidate (each has the shared JSON
+This costs at most four visual batches per candidate (each has the shared JSON
 helper's single retry), not one model call per video frame. Sparse sampling can
 miss brief actions, and models can misidentify subjects; the confidence score is
 a judgment, not a calibrated probability. Inspect the resulting cutaway before
@@ -136,6 +155,15 @@ confident asset means generated art if enabled and available, otherwise the
 original. Existing specs work offline; enabling web cutaways reuses successful
 plans/assets and can recover deleted assets. Safe-only also rechecks saved source
 metadata, but does not refresh upstream license pages for an offline rerender.
+
+`footage_coverage` stores each clip's target. `footage_coverage_report` measures the
+union of usable video windows across kept spans, excluding stills and missing
+assets, and lists gaps. Planning retries an under-target plan once and retains a
+useful partial plan if the target still cannot be met. No confidence thresholds
+are relaxed. Rendering recalculates coverage from successfully composed windows
+and saves `<clip-id>.coverage.json`, so composition fallback cannot claim coverage
+it didn't deliver. Old automatic assets with orphaned `plan_id`s are removed when
+a plan is edited; independent editorial cutaways are preserved.
 
 ## Rights and provenance
 

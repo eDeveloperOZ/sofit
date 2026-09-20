@@ -143,6 +143,9 @@ Caveat: a re-render (step 4) brings the full length back — re-apply the cut af
 For requests to use authentic footage or real B-roll, follow the Real web footage
 section in [`../sofit-clips/SKILL.md`](../sofit-clips/SKILL.md). After picking clips,
 run the **local editable CLI** with `--render-from <spec> --web-cutaways`.
+Audio-only clips target 85% moving footage; use `--footage-coverage 90` for an
+explicit target. Supply episode context and exact subject/version, prefer primary
+publishers, and inspect the rendered `.coverage.json` gaps as well as the video.
 Install the `youtube` extra and Deno or Node 22+ to search YouTube alongside
 Commons. Use repeatable `--footage-url URL` for provided YouTube/direct-video
 links, and `--footage-after YYYY-MM-DD` for an explicit upload-date cutoff.

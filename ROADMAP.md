@@ -85,7 +85,10 @@ YouTube/Commons discovery and explicit HTTPS video links, provenance, bounded
 coarse-to-fine frame review and cached silent excerpts. Recent-upload preferences
 and an explicit date cutoff support current topics. `--web-cutaways-safe-only` adds a conservative metadata
 allowlist. Search/selection failures retain the recording or use generated art
-when enabled. See [the architecture and limits](docs/web-footage.md).
+when enabled. Audio-only web mode targets 85% moving footage, with explicit
+coverage controls and measured render reports. Episode context, exact subject/version
+filters and publisher preferences keep discovery specific. See
+[the architecture and limits](docs/web-footage.md).
 
 ## Proposed (next)
 

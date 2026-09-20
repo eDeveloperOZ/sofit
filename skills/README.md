@@ -31,3 +31,6 @@ clips. See the repository README for credentials, caching, provenance and the
 optional `--web-cutaways-safe-only` metadata policy.
 YouTube search uses the optional `youtube` extra; provided YouTube/direct-video
 links use `--footage-url`, and explicit upload-date bounds use `--footage-after`.
+Audio-only web mode targets 85% video coverage; `--footage-coverage` overrides it.
+Use episode context and exact subject/version queries, prefer primary publishers,
+and check the rendered coverage report before calling a clip complete.

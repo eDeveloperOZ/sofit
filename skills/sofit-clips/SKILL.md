@@ -122,11 +122,25 @@ native web-cutaway pipeline. Keep the usual clip-selection workflow, then:
   Home path), install editable with `uv pip install --python "$HC/.venv/bin/python"
   -e "${HC}[dev,mcp,render,youtube]"`, and verify `"$PY" -c "import sofit; print(sofit.__file__)"`
   points into that checkout. Do not silently use a global/PyPI executable.
-- The feature chooses at most two useful beats per clip; it does not search for
-  every sentence. Commons and YouTube search need no key. YouTube needs the
+- For audio-only sources, web mode targets 85% moving-footage coverage by default.
+  Use `--footage-coverage 90` when most of the clip should be real video; `0`
+  requests sparse cutaways (the default over an existing video). This is a target,
+  not permission to use unrelated footage. Manual plans support up to 64 beats,
+  each 2–30 seconds, including the opening and closing. Group related sentences.
+  Commons and YouTube search need no key. YouTube needs the
   optional `youtube` extra and Deno or Node 22+. Planning and bounded frame review
   need the configured Claude backend. If unavailable, report that the recording
   was retained; do not claim real footage was inserted.
+- Read the surrounding episode transcript before choosing visuals. Preserve
+  `visual_context` in the spec, especially when a clip starts with pronouns or
+  statistics. The CLI reads an existing transcript cache when context is missing;
+  it does not re-transcribe. Identify the exact company, product, version and event:
+  e.g. `Figure Helix 2.5 30 homes demonstration`, not `robot home`. Put identity and
+  version in `required_terms`, and known primary publishers in `preferred_channels`.
+  These reject mismatched subjects and favor the named publisher; a channel name
+  is not verified ownership. Search can retry the same exact subject with fewer
+  action details, never replace it with a generic category. Use genuine subject
+  footage through commentary, without claiming the images prove spoken statistics.
 - For current events, preserve event names/dates in the query and context. The
   planner can prefer recent uploads. Use `--footage-after YYYY-MM-DD` only when
   the user supplied an appropriate cutoff; do not assume an old episode is current.
@@ -148,8 +162,14 @@ native web-cutaway pipeline. Keep the usual clip-selection workflow, then:
 - Inspect real rendered frames before/during/after the insert. Check identity,
   action, framing, original audio and Hebrew captions. Read `<clip-id>.sources.json`
   for credits and exact source timestamps; retain that provenance with the clip.
+  Read `<clip-id>.coverage.json` for actual rendered coverage and uncovered gaps.
+  If the target was missed, report it and improve the plan/sources; do not claim
+  that a mostly static cover/logo render meets a request for mostly real video.
 - Corrected rerenders use the saved spec without the flag, reusing local assets
-  offline. To replan, remove the clip's `visual_plan` and matching cutaways.
+  offline. To replace an old sparse/generic plan, edit or remove `visual_plan`,
+  then rerun web mode with the desired coverage. Obsolete automatic assets are
+  replaced; cutaways without a `plan_id` are manual and retain precedence.
+  Preserve caption corrections, kept spans and intentionally chosen source URLs.
   Never download replacement footage independently and bypass the selection/cache
   safeguards. The feature lives in the Python library/CLI, not this skill.
 
