@@ -112,3 +112,13 @@ byte-identical decoded audio and expected timing. This larger run reused the
 subset cache and included concurrent baseline rendering/testing; it is a
 correctness expansion, not another cold-cache benchmark. The remaining 6.9% gap
 was reported and retained the original visuals, without reducing confidence.
+
+A separate live test started with an automatically generated, version-specific
+toy-collection plan and actual YouTube search, rather than supplied URLs. It
+exposed stale queued action sets and changing search fallbacks; these led to
+late-action batching, shared continuation intents and a one-hour search cache.
+The final result reached 100% coverage using two visually evaluated sources.
+Replaying the unresolved plan with search/media/evidence cached took 31.1 s,
+with zero search metadata calls, downloads, frame passes or model calls. Original
+decoded audio and all-frame transition checks passed. Earlier attempts with
+insufficient matching evidence reported 61.9% and 84.9%, rather than hiding gaps.
