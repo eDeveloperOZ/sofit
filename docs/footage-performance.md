@@ -16,7 +16,9 @@ The progress option writes to stderr, leaving stdout available to callers.
 `--progress-file` appends JSONL; use a new filename to separate runs. Heartbeats
 appear every five seconds during long calls. Events include clip/source/beat
 counts, downloads, rendered clips, cache hits, Claude calls and elapsed time.
-No ETA is emitted: source/model latency is too variable for an uncalibrated estimate.
+`active_stages` reports concurrent in-flight operations, rather than repeating a
+completed stage while another worker is still downloading. Event-only reasons and
+messages do not leak into later status events. No ETA is emitted: source/model latency is too variable for an uncalibrated estimate.
 
 The output directory's `footage-metrics.json` contains totals. The JSONL also keeps
 per-clip completion latency and coverage, as well as rejection/failure events:
@@ -28,6 +30,8 @@ per-clip completion latency and coverage, as well as rejection/failure events:
 | `counts.cache_hit`, `cache_miss` | Reuse across media, metadata, evidence, excerpts and in-run futures; not unique source counts |
 | `seconds.frames`, `counts.frames_extracted` | Decoder/index work and produced frames |
 | `seconds.judge` | Visual batches, including waiting for the model semaphore |
+| `counts.model_calls`, `seconds.model` | All selected model transport attempts and wall time |
+| `counts.codex_calls`, `seconds.codex` | Explicit Codex CLI attempts and time |
 | `counts.claude_calls`, `seconds.claude` | Actual API/CLI transport attempts and time, including retries/planning |
 | `counts.source_analyses`, `repeated_source_analyses` | Uncached evidence passes by source content hash |
 | `seconds.beat_selection`, `normalize`, `ffmpeg`, `render` | Selection, excerpt normalization and final composition |
@@ -67,3 +71,42 @@ identical actions need no additional model calls; source metadata availability,
 new actions, source decoding and final encoding remain potential bottlenecks.
 Automatic planning is still per clip. Real-source live cold/warm benchmarks must
 be reported separately from this deterministic regression fixture.
+
+## Live application validation
+
+A three-clip audio-only episode subset was also run through the actual editable
+CLI with YouTube sources, native Codex image judgments (`gpt-6-astra`), two source
+workers and two model workers. The warm run started from the unresolved input
+plan, not the already-selected assets, so it exercised discovery and selection.
+
+| Metric | Empty footage cache | Warm footage cache |
+| --- | ---: | ---: |
+| Wall time | 357.1 s | 71.9 s |
+| Source downloads / received bytes | 4 / 50,528,219 | 0 / 0 |
+| Source analyses / frame passes | 4 / 4 | 0 / 0 |
+| Native image-model calls | 15 | 0 |
+| Cache-hit events | 25 | 55 |
+| Delivered footage coverage | 100%, 100%, 100% | 100%, 100%, 100% |
+
+FFprobe confirmed 1080×1920 H.264/AAC outputs, with duration errors below 25 ms
+against the kept spans. Decoded audio was byte-identical to the same clips rendered
+without cutaways. Representative frames were inspected for subject/action,
+aspect ratio and captions. An all-frame comparison with the original audiogram
+also checked for unintended base-frame flashes. That inspection exposed a
+fractional-boundary overlay EOF bug, now covered by a real FFmpeg regression test:
+the last frame holds only until its explicit cutaway window ends.
+
+Whole-file YouTube transfers had hit the 180 s bound; bounded 1 MiB HTTP ranges
+reduced transfer time for these four sources to 10.3 s total. The same size/time
+limits and integrity checks remain active. These measurements are observations
+from one machine/account/network, not a throughput or coverage guarantee.
+Separately, a live Claude quota failure produced original-visual fallback rather
+than false coverage; the successful measurements above explicitly used Codex.
+
+Only after this subset passed, validation expanded to six clips with shared
+sources: 486.2 s, two additional downloads, three source/action analyses, nine
+model calls, and coverage of 100%, 93.1%, 100%, 100%, 100%, 100%. All six retained
+byte-identical decoded audio and expected timing. This larger run reused the
+subset cache and included concurrent baseline rendering/testing; it is a
+correctness expansion, not another cold-cache benchmark. The remaining 6.9% gap
+was reported and retained the original visuals, without reducing confidence.

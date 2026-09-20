@@ -19,8 +19,10 @@ clip words → one visual plan → provider search → metadata/rights ranking
 - `footage.Candidate`: provider-independent source/media URLs, dimensions,
   duration, optional size/cues, descriptive text and rights metadata.
 - `footage_selection.FrameJudge`: a batch `score(frames, intent)` and a stable
-  `cache_key`. The built-in judge reuses Sofit's Claude transport and model
-  override; a library caller can inject another judge without changing rendering.
+  `cache_key`. The built-in `ModelFrameJudge` reuses Sofit's selected model transport
+  and model override; `ClaudeFrameJudge` remains a compatibility alias. A library
+  caller can inject another judge without changing rendering. An optional
+  `score_source(frames, intents, candidate)` method receives source attribution too.
 - `SelectedSegment`: source URL, start/end, confidence and visible-evidence reason.
 - Resolved cutaway: existing `span`, `start`, `end`, plus a local `video`, optional
   `fit`, `asset_sha256`, and `source` metadata. An `image` is no longer required
@@ -131,7 +133,8 @@ miss brief actions; these judgments are not calibrated probabilities.
 
 Analysis returns multiple verified ranges. Beat selection can concatenate several
 of them without changing the podcast timeline. Previously allocated source
-intervals are not repeated across the batch just to inflate coverage. Insufficient
+intervals are not repeated within one clip just to inflate coverage. Independent
+clips can reuse those intervals and their cached evidence/excerpts. Insufficient
 evidence leaves a reported gap. Exact span ends tolerate floating-point error up
 to one microsecond and clamp to the span, so editors need no 0.05-second workaround.
 The existing `select_segment` library function remains available for single-shot
@@ -184,6 +187,14 @@ A quota/authentication/rate-limit failure prevents additional model launches for
 that session; persisted successful evidence can still be used. See
 [performance validation](footage-performance.md) for progress and profiling.
 
+YouTube CDN media is fetched in bounded 1 MiB HTTP ranges. Every partial response
+must match its requested offset/length and a stable total size; unexpected full
+responses after the first chunk, truncated ranges and oversized totals are rejected.
+This avoids the very slow whole-file transfer observed during live validation.
+The existing 720p preference, public-host validation and overall transfer limits
+remain unchanged. A blocked visual service cancels in-flight transfers at the next
+received chunk, removes partial files, and still allows valid cache hits.
+
 Defaults: 256 MiB, 600 source seconds, 30-second socket/probe timeout,
 180-second download budget, 120-second normalization timeout, 7680px maximum
 source dimensions. The library's `FootageCache(..., limits=Limits(...))` can set
@@ -232,3 +243,31 @@ Provider reference: [Commons MediaWiki API](https://commons.wikimedia.org/wiki/C
 YouTube references: [yt-dlp](https://github.com/yt-dlp/yt-dlp),
 [JavaScript setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS),
 [removal of date sorting](https://github.com/yt-dlp/yt-dlp/pull/15959).
+
+## Model providers
+
+Claude remains the default: `api` uses Anthropic and `claude-cli` uses the existing
+Claude Code account. `--titler codex-cli` explicitly selects an authenticated Codex
+CLI for text and image calls. It sends images natively, runs in a temporary directory
+with a read-only sandbox, ignores user config, and disables shell, web search, MCP,
+hooks, multi-agent work and host skill discovery. It requires a CLI version with
+these switches (validated with 0.155.0-alpha.9.2). No OpenAI SDK or API key is added
+to Sofit's dependencies. Authentication and model availability belong to that CLI;
+use `--titler-model` to pin the model for reproducible evidence caching.
+
+The shared JSON parser/validator and one retry are provider independent; the
+historical `generate.call_claude_json` name remains compatible. A library caller
+can register `register_backend(name, transport, cache_key="provider-v1")`; the
+callable receives system/user text, model and optional local image paths and
+returns text. Registration is explicit Python API configuration, never code loaded
+from a clips spec. Transport identity/model separates evidence caches.
+
+Source-level judgment receives publisher/title/source context alongside images.
+Metadata does not prove the visible action or identity by itself: branding/design
+in the supplied frames must corroborate attribution. A factory name need not be
+readable in every shot, and identifiable component manufacture can satisfy a
+production intent. Unrelated machinery, CGI and unsupported attribution
+remain rejected under the same confidence gate. Evidence cache versioning prevents
+old context-free judgments from being reused for this contract.
+
+Codex reference: [non-interactive execution](https://learn.chatgpt.com/docs/non-interactive-mode).

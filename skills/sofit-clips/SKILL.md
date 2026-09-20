@@ -130,6 +130,10 @@ native web-cutaway pipeline. Keep the usual clip-selection workflow, then:
   A longer beat can combine several verified excerpts. Do not manufacture dozens
   of tiny beats to compensate for selection, or subtract 0.05 seconds at exact
   span ends; Sofit handles both cases. Preserve precise topic/action constraints.
+- `--titler codex-cli` can explicitly use an authenticated Codex CLI for planning
+  and visual judging; Claude remains the default. Do not switch accounts/providers
+  without the user's authorization, or replace visual judgments with metadata-only
+  approvals. Inspect actual frames and source attribution with either backend.
 - Quota/authentication failures stop model requests for the run. Report the blocker
   and coverage gaps; do not immediately retry a full episode or promise a speedup
   based on a synthetic benchmark. Restart a small subset after service recovery.

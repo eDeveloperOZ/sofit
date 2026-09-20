@@ -220,6 +220,14 @@ cutaway's `fit` to `cover` for a centered crop. Works with video and audiograms,
 but not the full replacement `--storyboard` mode. The feature is opt-in;
 existing commands retain their behavior.
 
+The existing Claude backends remain the defaults. An authenticated Codex CLI can
+also supply text planning and native-image judgments with `--titler codex-cli`
+(optionally pin a model with `--titler-model`). This is an explicit choice, never
+an automatic account switch. Library integrations can register a versioned model
+transport with `model_backends.register_backend`; the existing `FrameJudge`
+injection remains available for other visual evaluators. See the model-provider
+section in [the architecture notes](docs/web-footage.md).
+
 For batches, source downloads, frame indexes and action-specific visual evidence
 are shared across clips and persisted. A beat can use several verified excerpts;
 you do not need to split it into many tiny beats. Clips render and checkpoint as
@@ -355,7 +363,7 @@ chapters and Hebrew show notes for it."*
   or a direct audio URL — all cached after first fetch.
 - `--model` (default: ivrit-ai turbo), `--lang` (default `he`), `--max-chapters`,
   `--format {md,txt,youtube,spotify,podcast}`, `--embed-into AUDIO`,
-  `--titler {api,claude-cli}`, `--titler-model MODEL`, `--shownotes`, `--quotes`,
+  `--titler {api,claude-cli,codex-cli}`, `--titler-model MODEL`, `--shownotes`, `--quotes`,
   `--clips-json PATH`, `--render-clips DIR`, `--render-from PATH`, `--only ID`,
   `--aspect`, `--out`, `--no-cache`.
 
