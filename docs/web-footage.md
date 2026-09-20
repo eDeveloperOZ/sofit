@@ -11,7 +11,8 @@ clip words → one visual plan → provider search → metadata/rights ranking
 
 ## Contracts
 
-- `footage.VisualIntent`: English intent/query, desired duration, spoken context.
+- `footage.VisualIntent`: English intent/query, desired duration, spoken context,
+  optional explicit source URLs, upload-date cutoff and recent-upload preference.
 - `footage.FootageProvider`: `name`, `search(query, limit)` and
   `subtitles(candidate)`. An implementation without timed text returns `[]`.
 - `footage.Candidate`: provider-independent source/media URLs, dimensions,
@@ -52,7 +53,33 @@ The MVP provider uses Commons' public `generator=search`, `filetype:video` and
 `videoinfo` API. It normalizes HTML metadata into text and prefers a 360–1080p
 transcode near 720p, avoiding multi-gigabyte originals. Only Commons upload hosts
 are accepted by this provider. Commons timed-text tracks are preferred in English.
-No YouTube scraping, stock API, yt-dlp, or new dependency is involved.
+Commons has no optional dependency or API key.
+
+The YouTube provider uses the existing `youtube` extra (`yt-dlp[default]`) for
+public search and individual-video metadata. It resolves at most four of eight
+search hits, rejects live/private/age-restricted/DRM results and selects a direct
+HTTPS video stream up to 1080p. It never downloads through yt-dlp: the same bounded
+Sofit downloader validates Google video URLs and media. HLS/DASH-only sources are
+skipped. Metadata extraction uses yt-dlp's own networking in a subprocess with a
+90s timeout, bounded JSON output and socket/retry limits; configs, plugins,
+browser cookies and remote component downloads are disabled. Deno or Node 22+
+is needed for YouTube's player challenges; packaged EJS scripts come with the extra.
+
+YouTube removed sort-by-upload-date. Recent intents instead use an upload window
+(last month by default; week/month/year for an explicit cutoff) and then rank by
+relevance plus a small upload-age bonus. `published_after` rejects unknown/older
+dates across all providers. Upload dates are not event dates. Title/channel,
+upload date and reported license persist as provenance without fabricated rights.
+YouTube metadata often lacks enough information for the safe-only allowlist.
+
+Explicit `source_urls` replace discovery: YouTube URLs resolve through that
+provider, and direct HTTPS files are bounded-downloaded/probed by `DirectProvider`.
+Opaque filenames do not need a keyword match, but all links still pass visual
+selection. Direct files have unknown rights/date metadata; safe-only or an explicit
+date cutoff skips them before download. Generic HTML pages/playlists are unsupported.
+At most eight explicit links are accepted. Direct-file metadata probing downloads
+each candidate under the same per-file bounds; only two ranked candidates reach
+visual inspection. Prefer a short list when the source files are large.
 
 Catalog search is strict: the planner keeps queries concise (usually 2–4 words),
 preserving named subjects while keeping visual details in `intent`. For example,
@@ -81,7 +108,8 @@ publication. Unknown/missing subtitles never trigger full-source transcription.
 ## Cache, media and failure boundaries
 
 The cache is under the same XDG convention as transcription, in `sofit/footage`.
-A canonical HTTPS URL keys the original; its content hash, candidate metadata,
+A canonical HTTPS URL keys the original; YouTube uses canonical video+format
+identity so rotating signed URLs do not redownload cached bytes. Its content hash, candidate metadata,
 intent and judge version/model key each selected excerpt. Metadata sits alongside
 media. Atomic writes and unique temporary files prevent partial files becoming
 cache hits; size/hash/probe checks recover missing or corrupt entries. Concurrent
@@ -124,3 +152,6 @@ modification note. The sidecar records only assets used in successful compositio
 it is not an automatic attribution publication or rights-clearance mechanism.
 
 Provider reference: [Commons MediaWiki API](https://commons.wikimedia.org/wiki/Commons:API/MediaWiki).
+YouTube references: [yt-dlp](https://github.com/yt-dlp/yt-dlp),
+[JavaScript setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS),
+[removal of date sorting](https://github.com/yt-dlp/yt-dlp/pull/15959).

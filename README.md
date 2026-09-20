@@ -128,12 +128,12 @@ and cache in `<spec dir>/cutaways/`, so corrected re-renders keep them.
 
 Keep the recording and show authentic footage where seeing the real thing adds
 information: a product demonstration, a robot in motion, a place or an event.
-The planner chooses at most two visual beats per clip. Wikimedia Commons search,
+The planner chooses at most two visual beats per clip. YouTube and Wikimedia Commons search,
 metadata ranking and bounded visual inspection locate a relevant 3–8 second
 excerpt; the existing cutaway renderer keeps the podcast audio and captions.
 
 ```bash
-pip install 'sofit-cli[render]'
+pip install 'sofit-cli[render,youtube]'
 # First select clips and save their word timings (or use an existing spec).
 sofit episode.mp4 --clips-json episode.clips.json --titler claude-cli
 sofit --render-from episode.clips.json --render-clips out \
@@ -141,11 +141,19 @@ sofit --render-from episode.clips.json --render-clips out \
 # Conservative rights-metadata allowlist; this flag also enables web cutaways.
 sofit --render-from episode.clips.json --render-clips out \
       --web-cutaways-safe-only --titler claude-cli
+# Require a known upload date for current-event footage (adjust the date).
+sofit --render-from episode.clips.json --render-clips out \
+      --footage-after 2026-09-01 --titler claude-cli
+# Use specific YouTube or direct HTTPS video links instead of search.
+sofit --render-from episode.clips.json --render-clips out \
+      --footage-url 'https://www.youtube.com/watch?v=VIDEO_ID' --titler claude-cli
 ```
 
 Needs ffmpeg/ffprobe and the existing Claude backend: a logged-in Claude Code CLI
 or `ANTHROPIC_API_KEY` with `--titler api`. Commons needs no API key or new Python
-dependency. Only small sampled JPEGs and text reach Claude, never source audio
+dependency. YouTube uses the existing optional `youtube` extra (keep it updated),
+plus Deno or Node 22+ on PATH; no YouTube API key or browser cookies are needed.
+Without that extra, search uses Commons and reports the limitation. Only small sampled JPEGs and text reach Claude, never source audio
 or entire videos. `--titler-model` also controls the visual judge.
 
 By default, license metadata is **recorded without filtering**; this mode does
@@ -157,6 +165,21 @@ service. Creator, source/media URLs, license, attribution requirements, retrieva
 time and the selected source timestamps stay in the spec and in
 `out/<clip-id>.sources.json`. Use those credits when publishing; Sofit does not
 publish or burn attribution text into the video automatically.
+
+YouTube's reported license is retained verbatim, often `unknown`; no Creative
+Commons version or permission is inferred. Safe-only therefore skips most YouTube
+videos and all bare direct-file links. Use the default `--web-cutaways` mode when
+you want those sources under your own editorial policy.
+
+For recent announcements the planner prefers uploads from the last month, then
+ranks by relevance and upload age. `--footage-after YYYY-MM-DD` is a strict lower
+bound: unknown/older dates are excluded. Upload date does not prove when an event
+occurred. `--footage-url` is repeatable (up to eight links), replaces search for
+web beats, and still requires a confident visual match. It accepts individual
+YouTube videos/Shorts and direct video files, not arbitrary HTML pages. Both options
+enable web cutaways. Saved plans support the same `source_urls`, `published_after`
+and `prefer_recent` fields. Explicit new link/date options replace assets from the
+same automatic beat; manually authored cutaways retain precedence.
 
 The editable `visual_plan` and resolved cutaways persist in the spec. Downloads
 and silent H.264 excerpts live under `$XDG_CACHE_HOME/sofit/footage` (default

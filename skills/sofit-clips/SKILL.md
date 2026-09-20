@@ -120,16 +120,29 @@ native web-cutaway pipeline. Keep the usual clip-selection workflow, then:
 - Run the CLI from the actual Sofit checkout/venv. For development, resolve `HC`
   from the current workspace or the user's existing checkout (override the example
   Home path), install editable with `uv pip install --python "$HC/.venv/bin/python"
-  -e "${HC}[dev,mcp,render]"`, and verify `"$PY" -c "import sofit; print(sofit.__file__)"`
+  -e "${HC}[dev,mcp,render,youtube]"`, and verify `"$PY" -c "import sofit; print(sofit.__file__)"`
   points into that checkout. Do not silently use a global/PyPI executable.
 - The feature chooses at most two useful beats per clip; it does not search for
-  every sentence. Commons search needs no key. Planning and bounded frame review
+  every sentence. Commons and YouTube search need no key. YouTube needs the
+  optional `youtube` extra and Deno or Node 22+. Planning and bounded frame review
   need the configured Claude backend. If unavailable, report that the recording
   was retained; do not claim real footage was inserted.
+- For current events, preserve event names/dates in the query and context. The
+  planner can prefer recent uploads. Use `--footage-after YYYY-MM-DD` only when
+  the user supplied an appropriate cutoff; do not assume an old episode is current.
+  Unknown upload dates are excluded by this strict filter.
+- For user-supplied sources, pass repeatable `--footage-url URL` options; these
+  replace search for web beats and still require visual validation. Individual
+  YouTube/Shorts URLs and direct HTTPS video files work; arbitrary HTML pages do
+  not. Put `source_urls`, `published_after` or `prefer_recent` in a specific saved
+  visual beat when controls should apply to just that beat. Never invent URLs.
 - Default mode records rights metadata without filtering. For an explicit request
   for a conservative rights filter, use `--web-cutaways-safe-only` instead. It
   enables web cutaways and accepts only reported public domain, CC0 or CC BY with
   required metadata; it is not automatic legal clearance.
+  Most YouTube videos and all bare direct-file URLs lack that metadata and will
+  be skipped in safe-only mode. Do not silently enable it for a request to use
+  general YouTube footage.
 - Add `--cutaways` only when generated-image fallback is wanted and configured.
   Without it, low confidence or any failed provider keeps the recording.
 - Inspect real rendered frames before/during/after the insert. Check identity,

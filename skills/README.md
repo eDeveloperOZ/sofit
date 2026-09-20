@@ -29,3 +29,5 @@ they call the same local Python CLI and clips JSON interface, with no agent-spec
 runtime dependency. Requests for real B-roll use `--web-cutaways` after selecting
 clips. See the repository README for credentials, caching, provenance and the
 optional `--web-cutaways-safe-only` metadata policy.
+YouTube search uses the optional `youtube` extra; provided YouTube/direct-video
+links use `--footage-url`, and explicit upload-date bounds use `--footage-after`.

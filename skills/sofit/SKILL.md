@@ -143,6 +143,9 @@ Caveat: a re-render (step 4) brings the full length back — re-apply the cut af
 For requests to use authentic footage or real B-roll, follow the Real web footage
 section in [`../sofit-clips/SKILL.md`](../sofit-clips/SKILL.md). After picking clips,
 run the **local editable CLI** with `--render-from <spec> --web-cutaways`.
+Install the `youtube` extra and Deno or Node 22+ to search YouTube alongside
+Commons. Use repeatable `--footage-url URL` for provided YouTube/direct-video
+links, and `--footage-after YYYY-MM-DD` for an explicit upload-date cutoff.
 `--web-cutaways-safe-only` enables the conservative metadata filter; `--cutaways`
 allows generated fallback. Keep the saved plan/provenance, inspect frames and
 continuous audio/captions, and use normal `--render-from` for corrected rerenders.
