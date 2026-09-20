@@ -55,7 +55,10 @@ def _extract(target: str, flat: bool = False) -> dict:
     else:
         # Video-only is ideal: podcast audio replaces source audio. Avoid
         # manifests/fragments so ffmpeg never fetches untrusted remote URLs.
-        cmd += ["--format", "bv*[protocol=https][height<=1080][height>=240]",
+        # Like Commons, prefer a practical preview-size source for bounded
+        # discovery downloads; 1080p remains a fallback when no smaller stream exists.
+        cmd += ["--format", "bv*[protocol=https][height<=720][height>=240]/"
+                "bv*[protocol=https][height<=1080][height>=240]",
                 "--extractor-args", "youtube:skip=hls,dash"]
     cmd += ["--", target]
     try:

@@ -63,7 +63,7 @@ Commons has no optional dependency or API key.
 The YouTube provider uses the existing `youtube` extra (`yt-dlp[default]`) for
 public search and individual-video metadata. It resolves at most four of eight
 search hits, rejects live/private/age-restricted/DRM results and selects a direct
-HTTPS video stream up to 1080p. It never downloads through yt-dlp: the same bounded
+HTTPS video stream, preferring up to 720p with a 1080p fallback. It never downloads through yt-dlp: the same bounded
 Sofit downloader validates Google video URLs and media. HLS/DASH-only sources are
 skipped. Metadata extraction uses yt-dlp's own networking in a subprocess with a
 90s timeout, bounded JSON output and socket/retry limits; configs, plugins,
