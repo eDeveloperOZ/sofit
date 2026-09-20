@@ -331,7 +331,10 @@ def plan_cutaways(clip: dict, titler: str = "api", web: bool = False) -> list[di
             "product/person/event; keep visual details in intent, not query. "
             "Omit generic search words like footage/video and redundant synonyms. "
             "For example, query='rocket launch', intent='a rocket rising from "
-            "its launch pad with visible engine flame'."
+            "its launch pad with visible engine flame'. Include prefer_recent=true "
+            "when the speaker discusses a recent announcement or current event; "
+            "otherwise false. This prefers recent uploads, not proof of event date. "
+            "Preserve stated event dates in query/context; never invent dates or URLs."
         )
     user = "\n".join(span_texts)
 
@@ -368,7 +371,8 @@ def plan_cutaways(clip: dict, titler: str = "api", web: bool = False) -> list[di
                     continue
                 out.append({"span": i, "start": round(s, 2), "end": round(e, 2),
                             "source": source, "prompt": p, "intent": intent, "query": query,
-                            "duration": round(e - s, 2), "context": str(c.get("context") or "")})
+                            "duration": round(e - s, 2), "context": str(c.get("context") or ""),
+                            "prefer_recent": c.get("prefer_recent") is True})
             elif e - s >= 2.0:
                 out.append({"span": i, "start": round(s, 2),
                             "end": round(e, 2), "prompt": p})
@@ -428,7 +432,8 @@ def add_cutaways(doc: dict, spec_path: str, only: str | None = None,
 def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
                      style: str | None = None, titler: str = "api",
                      generated: bool = False, animate: bool = False,
-                     safe_only: bool = False, providers=None, cache=None, judge=None) -> int:
+                     safe_only: bool = False, providers=None, cache=None, judge=None,
+                     source_urls: tuple[str, ...] = (), published_after: str = "") -> int:
     """Resolve an editable visual_plan into ordinary image/video cutaways.
 
     Existing editorial cutaways survive. Saved plans and assets are reused;
@@ -466,7 +471,15 @@ def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
             for beat in clip["visual_plan"][:2]:
                 if beat.get("source") not in {"web", "generated"}:
                     continue
+                old_id = hashlib.sha256(json.dumps(beat, sort_keys=True).encode()).hexdigest()[:24]
+                if source_urls:
+                    beat["source_urls"] = list(source_urls)
+                if published_after:
+                    beat["published_after"] = published_after
+                    beat["prefer_recent"] = True
                 plan_id = hashlib.sha256(json.dumps(beat, sort_keys=True).encode()).hexdigest()[:24]
+                if old_id != plan_id:
+                    existing = [c for c in existing if c.get("plan_id") != old_id]
                 matches = [c for c in existing if c.get("plan_id") == plan_id]
                 reusable = _usable_cutaways(matches)
                 if reusable:
@@ -486,7 +499,10 @@ def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
                 asset = None
                 if beat.get("source") == "web":
                     intent = VisualIntent(beat["intent"], beat["query"], end - start,
-                                          beat.get("context", ""))
+                                          beat.get("context", ""),
+                                          prefer_recent=beat.get("prefer_recent") is True,
+                                          published_after=beat.get("published_after", ""),
+                                          source_urls=tuple(beat.get("source_urls") or ()))
                     asset = find_footage(intent, providers=providers, cache=cache, judge=judge,
                                          titler=titler, safe_only=safe_only)
                 fallback_prompt = beat.get("prompt") or beat.get("intent")

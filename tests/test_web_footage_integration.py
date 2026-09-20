@@ -19,7 +19,8 @@ def run(*args):
     return subprocess.run(args, check=True, capture_output=True, timeout=120).stdout
 
 
-def test_transcript_to_selected_web_cutaway_and_real_render(monkeypatch, tmp_path):
+@pytest.mark.parametrize("provider_kind", ["fixture", "youtube", "direct"])
+def test_transcript_to_selected_web_cutaway_and_real_render(monkeypatch, tmp_path, provider_kind):
     Image = pytest.importorskip("PIL.Image")
     original, footage = tmp_path / "episode.mp4", tmp_path / "web.mp4"
     run("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=blue:s=180x320:r=30:d=12",
@@ -70,16 +71,34 @@ def test_transcript_to_selected_web_cutaway_and_real_render(monkeypatch, tmp_pat
     monkeypatch.setattr(storyboard, "call_claude_json", plan)
     spec = tmp_path / "episode.clips.json"
     cache = f.FootageCache(tmp_path / "cache")
-    assert storyboard.add_web_cutaways(doc, str(spec), providers=[Provider()], cache=cache,
-                                       judge=Judge(), safe_only=True) == 1
+    providers, urls = [Provider()], ()
+    if provider_kind == "youtube":
+        from sofit import footage_youtube as yt
+        def extract(target, flat=False):
+            if flat:
+                queries.append(target)
+                return {"entries": [{"url": "https://www.youtube.com/watch?v=abcdefghijk",
+                                     "title": "Unitree robot running", "duration": 24}]}
+            return {"webpage_url": target, "title": "Unitree robot running", "duration": 24,
+                    "url": "https://r1.googlevideo.com/videoplayback", "protocol": "https",
+                    "format_id": "136", "width": 320, "height": 240, "channel": "Fixture",
+                    "license": "Public domain", "upload_date": "20260918"}
+        monkeypatch.setattr(yt, "_extract", extract)
+        providers = [yt.YouTubeProvider()]
+    elif provider_kind == "direct":
+        urls = ("https://example.org/123.mp4",)
+    assert storyboard.add_web_cutaways(doc, str(spec), providers=providers, cache=cache,
+                                       judge=Judge(), safe_only=provider_kind == "fixture",
+                                       source_urls=urls) == 1
     stored = json.loads(spec.read_text())
     cutaway = stored["clips"][0]["cutaways"][0]
     assert 8 <= cutaway["source"]["selection"]["start"] < cutaway["source"]["selection"]["end"] <= 16
     assert stored["clips"][0]["words"] == clip["words"]
     # A correction/rerender needs neither network nor the planning/model backend.
-    assert storyboard.add_web_cutaways(stored, str(spec), providers=[Provider()], cache=cache,
-                                       judge=Judge(), safe_only=True) == 0
-    assert len(downloads) == len(queries) == 1
+    assert storyboard.add_web_cutaways(stored, str(spec), providers=providers, cache=cache,
+                                       judge=Judge(), safe_only=provider_kind == "fixture") == 0
+    assert len(downloads) == 1
+    assert len(queries) == (0 if provider_kind == "direct" else 1)
     monkeypatch.setattr(render, "_target_resolution", lambda *a: (180, 320))
     output = Path(render.render_clips(str(original), stored["clips"], str(tmp_path / "out"), hook_card=False)[0])
     baseline_clip = {**clip, "cutaways": []}
@@ -99,5 +118,6 @@ def test_transcript_to_selected_web_cutaway_and_real_render(monkeypatch, tmp_pat
         pixels = [image.getpixel((x, y)) for x in range(180) for y in range(170, 290)]
         assert sum(r > 170 and g > 170 for r, g, b in pixels) > 10
     credit = json.loads(output.with_suffix(".sources.json").read_text())["sources"][0]
-    assert credit["creator"] == "Fixture" and credit["license"] == "Public domain"
+    assert credit["creator"] == ("" if provider_kind == "direct" else "Fixture")
+    assert credit["license"] == ("unknown" if provider_kind == "direct" else "Public domain")
     assert credit["selection"] == cutaway["source"]["selection"]

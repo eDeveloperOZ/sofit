@@ -117,12 +117,17 @@ def _parser() -> argparse.ArgumentParser:
                    "scenes over the footage at concrete visual moments "
                    "(needs GEMINI_API_KEY + a Claude backend)")
     p.add_argument("--web-cutaways", action="store_true",
-                   help="with --render-from: find real footage on Wikimedia Commons "
+                   help="with --render-from: find real footage on Commons and YouTube (youtube extra) "
                    "for useful visual beats; uses the Claude backend to plan and "
                    "inspect bounded keyframes, and caches the selected shots")
     p.add_argument("--web-cutaways-safe-only", action="store_true",
                    help="enable web cutaways, accepting only public-domain, CC0, "
                    "or CC BY metadata with no reported restrictions")
+    p.add_argument("--footage-url", action="append", default=[], metavar="URL",
+                   help="enable web cutaways using these YouTube or direct HTTPS video links "
+                   "instead of search (repeat up to eight times)")
+    p.add_argument("--footage-after", metavar="YYYY-MM-DD", default="",
+                   help="enable web cutaways and require a known upload date on or after this date")
     p.add_argument("--animate", action="store_true",
                    help="with --storyboard: animate each scene via image-to-video "
                    "(fal.ai Kling, needs FAL_KEY; ~$0.25-0.50 per scene). Failed "
@@ -168,7 +173,8 @@ def _render_from(clips_path: str, out_dir: str | None, aspect: str, only: str | 
                  char_refs: dict[str, str] | None = None,
                  titler: str = "api", animate: bool = False,
                  cutaways: bool = False, web_cutaways: bool = False,
-                 web_cutaways_safe_only: bool = False) -> int:
+                 web_cutaways_safe_only: bool = False,
+                 footage_urls: tuple[str, ...] = (), footage_after: str = "") -> int:
     """Render clips from a saved (possibly corrected) clips.json, no transcription.
     Output goes to `out_dir` if given, else the clips.json's own folder."""
     import json
@@ -208,7 +214,8 @@ def _render_from(clips_path: str, out_dir: str | None, aspect: str, only: str | 
         try:
             n = sb.add_web_cutaways(doc, clips_path, only=only, style=style,
                                     titler=titler, generated=cutaways, animate=animate,
-                                    safe_only=web_cutaways_safe_only)
+                                    safe_only=web_cutaways_safe_only,
+                                    source_urls=footage_urls, published_after=footage_after)
             print(f"added {n} web/generated cutaway(s); spec updated", file=sys.stderr)
         except (OSError, ValueError) as e:
             print(f"warning: cannot save web cutaways: {e}; continuing render", file=sys.stderr)
@@ -295,8 +302,16 @@ def main(argv: list[str] | None = None) -> int:
         return _caption_check(raw[1:])
 
     args = _parser().parse_args(argv)
-    if args.web_cutaways_safe_only:
+    if args.web_cutaways_safe_only or args.footage_url or args.footage_after:
         args.web_cutaways = True
+    if args.footage_url or args.footage_after:
+        from .footage import VisualIntent, FootageError
+        try:
+            VisualIntent("validate", "validate", 3, source_urls=tuple(args.footage_url),
+                         published_after=args.footage_after)
+        except (ValueError, FootageError) as e:
+            print(f"error: invalid footage options: {e}", file=sys.stderr)
+            return 1
     if args.web_cutaways and (not args.render_from or args.storyboard):
         print("error: web cutaways use the recording: pass --render-from clips.json "
               "without --storyboard (create the spec with --clips-json first)", file=sys.stderr)
@@ -323,7 +338,8 @@ def main(argv: list[str] | None = None) -> int:
                             char_refs=_parse_char_refs(args.char_ref),
                             titler=args.titler, animate=args.animate,
                             cutaways=args.cutaways, web_cutaways=args.web_cutaways,
-                            web_cutaways_safe_only=args.web_cutaways_safe_only)
+                            web_cutaways_safe_only=args.web_cutaways_safe_only,
+                            footage_urls=tuple(args.footage_url), footage_after=args.footage_after)
 
     if args.storyboard:
         print("error: --storyboard renders from a saved spec; run once to get a "
