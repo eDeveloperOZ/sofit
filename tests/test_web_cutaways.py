@@ -176,3 +176,23 @@ def test_saved_original_beat_never_generates_art(monkeypatch, tmp_path):
     monkeypatch.setattr(sb, '_scene_image', forbidden)
     assert sb.add_web_cutaways(d, str(tmp_path / 'clips.json'), generated=True) == 0
     assert not d['clips'][0]['cutaways']
+
+
+def test_missing_art_prompt_uses_visual_intent_for_enabled_fallback(monkeypatch, tmp_path):
+    d = doc(tmp_path)
+    d['clips'][0]['visual_plan'] = [{**beat(), 'prompt': ''}]
+    monkeypatch.setattr(fs, 'find_footage', lambda *a, **k: None)
+    prompts = []
+    def image(prompt, style, sheet, path):
+        prompts.append(prompt)
+        path.write_bytes(b'image')
+    monkeypatch.setattr(sb, '_scene_image', image)
+    assert sb.add_web_cutaways(d, str(tmp_path / 'clips.json'), generated=True) == 1
+    assert prompts == [beat()['intent']]
+
+
+@pytest.mark.parametrize('field,value', [('start', float('nan')), ('end', float('inf'))])
+def test_web_plan_rejects_nonfinite_times_before_clamping(monkeypatch, tmp_path, field, value):
+    monkeypatch.setattr(sb, 'call_claude_json', lambda system, user, validate, **k:
+                        validate({'cutaways': [{**beat(), field: value}]}))
+    assert sb.plan_cutaways(doc(tmp_path)['clips'][0], web=True) == []

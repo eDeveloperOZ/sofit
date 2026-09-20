@@ -291,6 +291,7 @@ def _scene_video(prompt: str, still: Path, dur: float, out_path: Path) -> Path |
 
 def plan_cutaways(clip: dict, titler: str = "api", web: bool = False) -> list[dict]:
     """One bounded visual plan per clip, using span-relative transcript timings."""
+    import math
     spans = clip.get("segments") or [
         {"start": clip["start"], "end": clip["end"], "words": clip.get("words")}]
     span_texts = []
@@ -343,9 +344,10 @@ def plan_cutaways(clip: dict, titler: str = "api", web: bool = False) -> list[di
             if (not web and not p) or not (0 <= i < len(spans)):
                 continue
             dur = float(spans[i]["end"]) - float(spans[i]["start"])
+            if web and not all(map(math.isfinite, (s, e, dur))):
+                continue
             s, e = max(0.0, s), min(e, dur)
             if web:
-                import math
                 source = c.get("source", "original")
                 s = max(s, 3.0 if i == 0 else 0.0)
                 e = min(e, dur - (2.5 if i == len(spans) - 1 else 0.0), s + 8)
@@ -481,21 +483,22 @@ def add_web_cutaways(doc: dict, spec_path: str, only: str | None = None,
                                           beat.get("context", ""))
                     asset = find_footage(intent, providers=providers, cache=cache, judge=judge,
                                          titler=titler, safe_only=safe_only)
-                if asset is None and generated and beat.get("prompt"):
+                fallback_prompt = beat.get("prompt") or beat.get("intent")
+                if asset is None and generated and fallback_prompt:
                     try:
                         # Content-based names avoid stale art after a prompt/style edit
                         # and do not interpolate an untrusted clip id into a path.
-                        key = hashlib.sha256((style + beat["prompt"]).encode()).hexdigest()[:24]
+                        key = hashlib.sha256((style + fallback_prompt).encode()).hexdigest()[:24]
                         directory = Path(spec_path).resolve().parent / "cutaways" / key
                         directory.mkdir(parents=True, exist_ok=True)
                         png = directory / "still.png"
                         if not png.exists():
-                            _scene_image(beat["prompt"], style, None, png)
+                            _scene_image(fallback_prompt, style, None, png)
                         asset = {"image": str(png)}
                         if animate:
                             mp4 = directory / "animated.mp4"
                             if not mp4.exists():
-                                _scene_video(beat["prompt"], png, end - start, mp4)
+                                _scene_video(fallback_prompt, png, end - start, mp4)
                             if mp4.exists():
                                 asset["video"] = str(mp4)
                     except Exception as e:  # optional image provider boundary
