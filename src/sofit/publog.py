@@ -30,12 +30,26 @@ import sys
 from pathlib import Path
 
 
+def _ab_tags(name: str) -> list[str]:
+    """Arbitrary A/B arms carried in the filename as `.ab-<slug>` segments.
+
+    Navot's standing rule (2026-09-23): every non-bug comment becomes a test.
+    Only two knobs used to be measurable - the hook variant number and the
+    persistent-card style - because those were the only things the filename
+    encoded, so ideas like "smaller captions" or "no karaoke highlight" could
+    be shipped but never settled. A free-form tag costs nothing here and the
+    scraper's _cells() already groups by any row key.
+    """
+    return re.findall(r"\.ab-([a-z0-9]+(?:-[a-z0-9]+)*)", Path(name).name.lower())
+
+
 def _clip_and_variant(name: str) -> tuple[str, int]:
     """`clip-5` -> (clip-5, 0); `clip-5.hook2.mp4` -> (clip-5, 2).
     Renamed copies keep working: `WS205_clip-5.hook1.mp4` -> (clip-5, 1)."""
     stem = Path(name).name
     stem = re.sub(r"\.mp4$", "", stem)
     stem = re.sub(r"\.pers$", "", stem)  # persistent-card style marker
+    stem = re.sub(r"\.ab-[a-z0-9-]+", "", stem, flags=re.I)  # A/B arm markers
     m = re.search(r"(clip-\d+)(?:\.hook(\d+))?$", stem)
     if m:
         return m.group(1), int(m.group(2) or 0)
@@ -126,6 +140,11 @@ def main(argv: list[str] | None = None) -> int:
     }
     if ".pers" in Path(args.clip).name:
         row["hook_style"] = "persistent"
+    for tag in _ab_tags(args.clip):
+        # ab-<dimension>-<arm>, e.g. ab-accent-off -> row["ab_accent"] = "off".
+        # A bare tag records itself, so ab-coldopen groups against untagged rows.
+        dim, _, arm = tag.partition("-")
+        row[f"ab_{dim}"] = arm or "on"
     if args.speaker:
         row["speaker"] = args.speaker
     if args.time_local:

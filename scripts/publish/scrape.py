@@ -642,6 +642,10 @@ def main() -> int:
 
     by_hook_style = _cells("hook_style", "flash")   # untagged rows are the default arm
     by_variant = _cells("variant")
+    # Every ab_* dimension any row carries, reported without needing code here:
+    # a new test is a filename tag, not a patch to the scraper.
+    ab_dims = sorted({k for r in lines for k in r if k.startswith("ab_")})
+    by_ab = {d: _cells(d, "control") for d in ab_dims}
 
     print(json.dumps({
         "status": "ok", "updated": len(updated), "failed": len(failures),
@@ -654,6 +658,7 @@ def main() -> int:
         "by_speaker": by_speaker,
         "by_hook_style": by_hook_style,
         "by_variant": by_variant,
+        "by_ab": by_ab,
         "all": updated,
     }, ensure_ascii=False))
     return 0
