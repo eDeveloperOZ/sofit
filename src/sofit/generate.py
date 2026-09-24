@@ -292,8 +292,10 @@ def call_claude_json(system: str, user: str, validate, model: str | None = None,
     transport = backend(titler).transport
     last_err: Exception | None = None
     for _ in range(2):
-        text = (transport(system, user, model, images=images) if images
-                else transport(system, user, model))
+        from .footage_progress import model_stage
+        with model_stage(titler):
+            text = (transport(system, user, model, images=images) if images
+                    else transport(system, user, model))
         try:
             return validate(json.loads(_strip_fences(text)))
         except (json.JSONDecodeError, GenerationError) as e:
@@ -582,6 +584,12 @@ def _clip_words(segments: list[Segment], start: float, end: float) -> list[dict]
     return out
 
 
+def visual_context(segments: list[Segment], start: float, end: float) -> str:
+    """Keep nearby topic introductions for clips that only say 'it' or 'the robot'."""
+    return "\n".join(f"[{s.start:.1f}] {s.text}" for s in segments
+                     if s.end >= start - 180 and s.start <= end + 30)[:16000]
+
+
 def clip_spec(q: Quote, segments: list[Segment], clip_id: str) -> dict:
     """One clips.json entry from a resolved Quote. A multi-beat quote becomes a
     `segments` list (each beat with its own beat-relative words) — the renderer
@@ -593,6 +601,7 @@ def clip_spec(q: Quote, segments: list[Segment], clip_id: str) -> dict:
         "hook": q.text,
         "hook_variants": list(q.variants),
         "focus": None,
+        "visual_context": visual_context(segments, q.start, q.end),
     }
     beats = q.beats or ((q.start, q.end),)
     if len(beats) > 1:
